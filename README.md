@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="icons/128x128.png" width="96" height="96" alt="Android Device Manager">
+<img src="ui/logo.svg" width="96" height="96" alt="Android Device Manager">
 
 # Android Device Manager
 
