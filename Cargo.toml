@@ -3,6 +3,7 @@ name = "android-device-manager"
 version = "1.0.0"
 description = "Administrador de dispositivos Android por adb, con espejo de pantalla por scrcpy"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 chrono = "0.4.45"
