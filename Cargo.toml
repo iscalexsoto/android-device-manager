@@ -1,0 +1,24 @@
+[package]
+name = "android-device-manager"
+version = "1.0.0"
+description = "Administrador de dispositivos Android por adb, con espejo de pantalla por scrcpy"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.45"
+netstat2 = "0.11.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sysinfo = "0.39.6"
+tauri = "2"
+tauri-plugin-dialog = "2"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+tauri-build = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Android Device Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <header class="titlebar" data-tauri-drag-region>
+    <img class="tb-logo" src="logo.svg" alt="" data-tauri-drag-region>
+    <div class="tb-name" data-tauri-drag-region>Android Device Manager</div>
+    <div class="vdiv" data-tauri-drag-region></div>
+    <div class="chip" id="server-chip" data-tauri-drag-region><span class="dot"></span><span class="chip-text">Iniciando</span></div>
+    <div class="tb-drag" data-tauri-drag-region></div>
+    <div class="winbtns">
+      <button class="winbtn" data-act="win-min" aria-label="Minimizar"></button>
+      <button class="winbtn" data-act="win-max" aria-label="Maximizar" id="win-max"></button>
+      <button class="winbtn close" data-act="win-close" aria-label="Cerrar"></button>
+    </div>
+  </header>
+
+  <div class="toolbar" id="toolbar"></div>
+
+  <div class="body">
+    <aside class="sidebar">
+      <div class="sb-head">
+        <div class="section-label" id="sb-title">Dispositivos</div>
+      </div>
+      <div class="sb-list" id="device-list"></div>
+      <div class="sb-foot mono" id="sb-foot"></div>
+    </aside>
+    <main class="stage" id="stage"></main>
+    <nav class="rail" id="rail"></nav>
+  </div>
+</div>
+<div id="layer"></div>
+<div id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>
