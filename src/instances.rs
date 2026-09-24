@@ -91,6 +91,10 @@ pub fn origin_of(path: &Path, scrcpy: Option<&Path>) -> String {
     if adb::is_in_sdk(path) {
         return "SDK de Android".into();
     }
+    // Antes que "Incluido en scrcpy": la copia descargada de scrcpy también trae adb.
+    if crate::tools::is_downloaded(path) && !path.parent().map(|p| p.join("scrcpy.exe").is_file()).unwrap_or(false) {
+        return "Descargado por esta app".into();
+    }
     if let Some(s) = scrcpy.and_then(|s| s.parent())
         && path.parent().map(|p| adb::same_path(p, s)).unwrap_or(false)
     {
@@ -221,6 +225,7 @@ pub fn scan(input: ScanInput) -> InstancesReport {
     bin_paths.extend(input.client_path.map(Path::to_path_buf));
     bin_paths.extend(adb::sdk_adb_candidates());
     bin_paths.extend(adb::find_in_path("adb.exe"));
+    bin_paths.extend(crate::tools::adb_exe());
     bin_paths.extend(input.scrcpy_path.and_then(crate::scrcpy::bundled_adb));
     bin_paths.extend(processes.iter().filter(|p| !p.path.is_empty()).map(|p| PathBuf::from(&p.path)));
     let binaries: Vec<AdbBinary> = adb::dedup_paths(bin_paths)
@@ -273,11 +278,14 @@ fn detect_issues(r: &InstancesReport) -> Vec<Issue> {
     let mut out = Vec::new();
 
     let Some(client) = &r.client_path else {
-        out.push(issue(
+        let mut i = issue(
             "danger",
             "No se encontró adb",
-            "Instala Android SDK Platform-Tools (desde Android Studio → SDK Manager) o indica la ruta de adb.exe en Ajustes.",
-        ));
+            "Descarga Android SDK Platform-Tools desde Google con el botón, instálalo desde Android Studio → SDK Manager o indica la ruta de adb.exe en Ajustes.",
+        );
+        i.action = Some("install-tool:adb".into());
+        i.action_label = Some("Descargar e instalar".into());
+        out.push(i);
         return out;
     };
 

@@ -27,6 +27,7 @@ servidor adb **sin pelearte con Android Studio**.
 - 🔁 **Reiniciar** en modo normal, recovery o bootloader.
 - 🛠️ **Control del servidor adb**: iniciar, reiniciar o detener; modo compartido o aislado; diagnóstico de conflictos.
 - 🧾 **Registro** de cada comando de adb/scrcpy con código de salida, duración y salida.
+- ⬇️ **Descarga de adb y scrcpy** con un clic si no están en el equipo.
 
 ## Requisitos
 
@@ -34,8 +35,14 @@ servidor adb **sin pelearte con Android Studio**.
 |---|---|
 | Windows 10/11 con WebView2 (incluido con Edge) | Ejecutar la app |
 | [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools) | `adb`, el mismo que usa Android Studio |
-| [scrcpy](https://github.com/Genymobile/scrcpy) (`winget install Genymobile.scrcpy`) | Ver y grabar la pantalla |
+| [scrcpy](https://github.com/Genymobile/scrcpy) | Ver y grabar la pantalla |
 | Rust 1.85+ con toolchain MSVC y VS Build Tools | Solo para compilar |
+
+Si no tienes adb o scrcpy, la app muestra un botón **Descargar e instalar**. Descarga
+Platform-Tools desde Google y la versión más reciente de scrcpy desde su release en GitHub
+(verificando el SHA-256 publicado). Guarda los dos en
+`%LOCALAPPDATA%\com.soto.androiddevicemanager\tools`, sin pedir permisos de administrador.
+Si después instalas Android Studio, la app vuelve a usar el adb del SDK.
 
 ## Compilar y ejecutar
 
@@ -160,6 +167,7 @@ src/
   instances.rs   procesos adb, puertos en escucha, binarios y conflictos
   process.rs     ejecución sin consola y con tiempo límite
   settings.rs    preferencias (%APPDATA%\com.soto.androiddevicemanager\settings.json)
+  tools.rs       descarga de adb (Platform-Tools) y scrcpy desde sus fuentes oficiales
 ui/              index.html, styles.css, app.js, logo.svg
 capabilities/    permisos de la ventana (Tauri 2)
 icons/           iconos de la app y del instalador

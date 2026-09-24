@@ -4,6 +4,7 @@ use crate::adb::{self, AdbVersion, Device, DeviceDetails, InstallFailure};
 use crate::instances::{self, InstancesReport, ScanInput};
 use crate::process::{self, Output};
 use crate::scrcpy;
+use crate::tools::{self, Tool};
 use crate::settings::{RecordOptions, ScrcpyOptions, Settings};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -69,6 +70,22 @@ pub struct RecordingInfo {
     pub audio: bool,
 }
 
+/// Progreso de la descarga de adb o scrcpy, emitido como evento `tool`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolEvent {
+    pub tool: String,
+    pub label: String,
+    /// resolve | download | extract | done | error
+    pub phase: String,
+    pub received: u64,
+    pub total: Option<u64>,
+    pub elapsed_ms: u128,
+    pub version: Option<String>,
+    pub path: Option<String>,
+    pub message: Option<String>,
+}
+
 /// Progreso de una instalación, emitido como evento `install`.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,6 +147,8 @@ pub struct Core {
     log: Mutex<VecDeque<LogEntry>>,
     next_log: std::sync::atomic::AtomicU64,
     versions: Mutex<HashMap<String, Option<AdbVersion>>>,
+    /// Herramientas que se están descargando (adb, scrcpy).
+    tool_installs: Mutex<HashSet<&'static str>>,
 }
 
 pub type Shared = Arc<Core>;
@@ -157,6 +176,7 @@ impl Core {
             log: Mutex::new(VecDeque::new()),
             next_log: std::sync::atomic::AtomicU64::new(1),
             versions: Mutex::new(HashMap::new()),
+            tool_installs: Mutex::new(HashSet::new()),
         })
     }
 
@@ -376,6 +396,90 @@ impl Core {
         let _ = self.stop_server();
         thread::sleep(Duration::from_millis(400));
         self.start_server()
+    }
+
+    // -------------------------------------------------------------------
+    // Descarga de herramientas
+    // -------------------------------------------------------------------
+
+    /// Descarga adb o scrcpy a la carpeta de la app, informando con eventos `tool`.
+    pub fn install_tool(&self, name: &str) -> Result<(), String> {
+        let tool = Tool::parse(name)?;
+        if !self.tool_installs.lock().unwrap().insert(tool.key()) {
+            return Err(format!("Ya se está descargando {}", tool.label()));
+        }
+        let start = Instant::now();
+        let mut ev = ToolEvent {
+            tool: tool.key().into(),
+            label: tool.label().into(),
+            phase: "resolve".into(),
+            received: 0,
+            total: None,
+            elapsed_ms: 0,
+            version: None,
+            path: None,
+            message: None,
+        };
+        let emit = |ev: &mut ToolEvent, phase: &str| {
+            ev.phase = phase.into();
+            ev.elapsed_ms = start.elapsed().as_millis();
+            let _ = self.app.emit("tool", ev.clone());
+        };
+
+        let res = tools::install(tool, |step| match step {
+            tools::Step::Resolve => emit(&mut ev, "resolve"),
+            tools::Step::Download { received, total } => {
+                ev.received = received;
+                ev.total = total;
+                emit(&mut ev, "download");
+            }
+            tools::Step::Extract => emit(&mut ev, "extract"),
+        });
+        self.tool_installs.lock().unwrap().remove(tool.key());
+
+        let command = format!("Descargar {}", tool.label());
+        let note = |ok: bool, text: String| Output {
+            code: Some(if ok { 0 } else { 1 }),
+            stdout: text.into_bytes(),
+            stderr: String::new(),
+            timed_out: false,
+            elapsed: start.elapsed(),
+        };
+        match res {
+            Ok(done) => {
+                let path = done.exe.display().to_string();
+                self.push_log(
+                    command,
+                    Some(&note(true, format!("{}\nVersión {} · {:.1} MB\n{path}", done.url, done.version, done.bytes as f64 / 1_048_576.0))),
+                    None,
+                );
+                // Una ruta manual que ya no existe taparía la copia recién descargada.
+                self.update_settings(|s| {
+                    let custom = match tool {
+                        Tool::Adb => &mut s.adb_path,
+                        Tool::Scrcpy => &mut s.scrcpy_path,
+                    };
+                    if !custom.trim().is_empty() && !Path::new(custom.trim()).is_file() {
+                        custom.clear();
+                    }
+                })?;
+                ev.version = Some(done.version);
+                ev.path = Some(path);
+                emit(&mut ev, "done");
+                if tool == Tool::Adb && self.settings().auto_start_server && adb::server_version(self.port()).is_none() {
+                    if let Err(e) = self.start_server() {
+                        self.toast("danger", e);
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => {
+                self.push_log(command, Some(&note(false, e.clone())), None);
+                ev.message = Some(e);
+                emit(&mut ev, "error");
+                Ok(())
+            }
+        }
     }
 
     // -------------------------------------------------------------------

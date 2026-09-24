@@ -295,6 +295,10 @@ input, select, textarea { font: inherit; color: inherit; }
 .settings-row .lab span { font-size: 11px; color: var(--ink-3); }
 .path-field { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .hint { font-size: 11px; color: var(--ink-3); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hint .link-btn { font-size: inherit; }
+.link-btn { border: 0; padding: 0; background: none; font: inherit; font-weight: 600; color: var(--primary); cursor: pointer; }
+.link-btn:hover { text-decoration: underline; }
+.link-btn[disabled] { color: var(--ink-3); cursor: default; text-decoration: none; }
 
 /* ---------- Capas: menús, popovers, tooltips, toasts ---------- */
 #layer { position: fixed; inset: 0; pointer-events: none; z-index: 50; }

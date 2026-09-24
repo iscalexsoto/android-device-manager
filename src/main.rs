@@ -6,6 +6,7 @@ mod instances;
 mod process;
 mod scrcpy;
 mod settings;
+mod tools;
 
 use crate::manager::{Core, LogEntry, Shared, Snapshot};
 use crate::instances::InstancesReport;
@@ -207,6 +208,12 @@ async fn external_mirror(core: State<'_, Shared>, pid: u32, action: String) -> R
 }
 
 #[tauri::command]
+async fn install_tool(core: State<'_, Shared>, tool: String) -> R<()> {
+    let c = core.inner().clone();
+    blocking(move || c.install_tool(&tool)).await
+}
+
+#[tauri::command]
 async fn pick_path(app: AppHandle, kind: String) -> R<Option<String>> {
     blocking(move || {
         let dlg = app.dialog().file();
@@ -290,6 +297,7 @@ fn main() {
             external_mirror,
             start_recording,
             stop_recording,
+            install_tool,
             pick_path,
             detect_paths,
             open_path,

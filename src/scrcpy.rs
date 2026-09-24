@@ -32,6 +32,7 @@ pub fn candidates() -> Vec<PathBuf> {
     if let Some(pf) = env("ProgramFiles") {
         list.push(pf.join("scrcpy").join("scrcpy.exe"));
     }
+    list.extend(crate::tools::scrcpy_exe());
 
     // Resolver enlaces (WinGet\Links) para llegar a la carpeta real.
     let list = list

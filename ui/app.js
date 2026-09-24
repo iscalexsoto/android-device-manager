@@ -61,6 +61,7 @@ const S = {
   consoles: {},       // serial -> { html, history: [], idx }
   busy: new Set(),    // acciones en curso
   installs: new Map(), // id -> último evento `install`
+  tools: new Map(),    // adb | scrcpy -> último evento `tool`
 };
 
 const INSTALL_ACTIVE = ['uninstall', 'copy', 'install'];
@@ -222,6 +223,15 @@ function viewDevice(stage) {
   const srv = S.snap?.server;
   if (!d) {
     stage.dataset.serial = '';
+    if (!S.snap.adbPath) {
+      patch(stage, `<div class="empty">
+        <img src="logo.svg" alt="">
+        <h2>No se encontró adb</h2>
+        <p>Esta app necesita adb (Android SDK Platform-Tools) para hablar con los teléfonos. Si usas Android Studio, instálalo desde SDK Manager; si no, descárgalo aquí desde Google.</p>
+        <div class="row">${toolButton('adb')}<button class="btn btn-secondary" data-act="nav" data-view="settings">${icon('settings')}Indicar ruta</button></div>
+      </div>`);
+      return;
+    }
     patch(stage, `<div class="empty">
       <img src="logo.svg" alt="">
       <h2>${srv?.running ? 'Sin dispositivos' : 'Servidor adb detenido'}</h2>
@@ -313,7 +323,7 @@ function optionsCard(on) {
   const noScrcpy = !S.snap.scrcpyPath;
   return `<div class="card">
     <div class="card-head"><div class="grow col" style="gap:2px"><div class="card-title">Opciones de pantalla</div><div class="card-sub">Se aplican al abrir la pantalla con scrcpy</div></div></div>
-    ${noScrcpy ? `<div class="banner" style="border-bottom:1px solid var(--line)"><span class="dot orange"></span><div class="col"><div class="card-title">scrcpy no está instalado</div><div class="card-sub">Instálalo con <span class="code">winget install Genymobile.scrcpy</span> o indica su ruta en Ajustes.</div></div></div>` : ''}
+    ${noScrcpy ? `<div class="banner" style="border-bottom:1px solid var(--line)"><span class="dot orange"></span><div class="col"><div class="card-title">scrcpy no está instalado</div><div class="card-sub">Descárgalo desde su página oficial en GitHub o indica su ruta en Ajustes.</div><div class="row" style="margin-top:8px">${toolButton('scrcpy', 'sm')}</div></div></div>` : ''}
     <div class="opt-grid">
       <div class="field"><label>Resolución máx.</label>${sel('maxSize', [[0, 'Original'], [2560, '2560 px'], [1920, '1920 px'], [1280, '1280 px'], [1024, '1024 px'], [800, '800 px']])}</div>
       <div class="field"><label>Bitrate</label>${sel('bitRate', [[2, '2 Mbps'], [4, '4 Mbps'], [8, '8 Mbps'], [16, '16 Mbps'], [24, '24 Mbps']])}</div>
@@ -381,8 +391,8 @@ function viewMirror(stage) {
       <div class="page-sub">Cada pantalla es una ventana de scrcpy en el escritorio. Se controla con mouse y teclado; al cerrarla termina la sesión. Las grabaciones corren en segundo plano, sin ventana.</div></div></div>
     ${recs ? `<div class="card"><div class="card-head"><div class="card-title grow">Grabaciones en curso</div></div>${recs}</div>` : ''}
     ${s.scrcpyPath ? '' : `<div class="card banner"><span class="dot danger"></span><div class="col grow" style="gap:6px"><div class="card-title">No se encontró scrcpy</div>
-      <div class="card-sub" style="line-height:1.6">Instálalo desde una terminal con <span class="code">winget install Genymobile.scrcpy</span> y pulsa Volver a detectar, o elige el ejecutable manualmente.</div>
-      <div class="row" style="margin-top:4px"><button class="btn btn-secondary sm" data-act="detect">${icon('search', 16)}Volver a detectar</button><button class="btn sm" data-act="pick" data-kind="scrcpy">${icon('folder', 16)}Elegir scrcpy.exe</button></div></div></div>`}
+      <div class="card-sub" style="line-height:1.6">Descárgalo desde su página oficial en GitHub, o instálalo por tu cuenta (<span class="code">winget install Genymobile.scrcpy</span>) y pulsa Volver a detectar.</div>
+      <div class="row" style="margin-top:4px">${toolButton('scrcpy', 'sm')}<button class="btn btn-secondary sm" data-act="detect">${icon('search', 16)}Volver a detectar</button><button class="btn sm" data-act="pick" data-kind="scrcpy">${icon('folder', 16)}Elegir scrcpy.exe</button></div></div></div>`}
     <div class="card">${rows || `<div class="list-empty">No hay pantallas abiertas desde esta ventana. Elige un dispositivo y pulsa Ver pantalla.</div>`}</div>
     ${ext ? `<div class="card"><div class="card-head"><div class="grow col" style="gap:2px"><div class="card-title">Otras ventanas de scrcpy</div><div class="card-sub">Abiertas por otra ejecución de esta app o desde una terminal</div></div></div>${ext}</div>` : ''}
     <div class="card card-pad col" style="gap:8px">
@@ -514,7 +524,7 @@ function viewSettings(stage) {
       <input class="input mono" data-set="${key}" value="${esc(s[key])}" placeholder="${esc(placeholder)}" spellcheck="false">
       <button class="btn btn-secondary sm" data-act="pick" data-kind="${kind}">Examinar</button>
       ${kind === 'folder' ? `<button class="icon-btn sm" data-act="open-captures" data-tip="Abrir carpeta">${icon('folder', 16)}</button>` : `<button class="icon-btn sm" data-act="clear-path" data-key="${key}" data-tip="Detección automática">${icon('search', 16)}</button>`}
-    </div><div class="hint mono" title="${esc(resolved || '')}">${resolved ? `En uso: ${esc(resolved)}` : 'No encontrado'}</div></div>
+    </div><div class="hint mono" title="${esc(resolved || '')}">${resolved ? `En uso: ${esc(resolved)}` : `No encontrado${kind === 'folder' ? '' : ` · ${toolButton(kind, 'link')}`}`}</div></div>
   </div>`;
   patch(stage, `<div class="view">
     <div class="page-head"><div class="grow col" style="gap:4px"><div class="page-title">Ajustes</div><div class="page-sub">Los cambios se guardan al momento.</div></div></div>
@@ -829,6 +839,83 @@ function renderTask(x) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Descarga de adb y scrcpy                                             */
+/* ------------------------------------------------------------------ */
+const TOOL_ACTIVE = ['resolve', 'download', 'extract'];
+const TOOL_NAME = { adb: 'adb', scrcpy: 'scrcpy' };
+const toolActive = (tool) => TOOL_ACTIVE.includes(S.tools.get(tool)?.phase);
+const toolPct = (x) => (x.total ? Math.min(100, Math.floor((x.received / x.total) * 100)) : 0);
+
+/** Botón «Descargar e instalar»; mientras descarga muestra el avance. `variant`: '' | 'sm' | 'link'. */
+function toolButton(tool, variant = '') {
+  const x = S.tools.get(tool);
+  const active = toolActive(tool);
+  const text = !active ? `Descargar e instalar ${TOOL_NAME[tool]}`
+    : x.phase === 'download' && x.total ? `Descargando ${toolPct(x)} %`
+      : x.phase === 'extract' ? 'Descomprimiendo…' : 'Descargando…';
+  if (variant === 'link') {
+    return `<button class="link-btn" data-act="install-tool" data-tool="${tool}" ${active ? 'disabled' : ''}>${esc(text)}</button>`;
+  }
+  return `<button class="btn btn-primary ${variant}" data-act="install-tool" data-tool="${tool}" ${active ? 'disabled' : ''}>${active ? spinner(16) : icon('install', variant === 'sm' ? 16 : 18)}${esc(text)}</button>`;
+}
+
+function onToolEvent(x) {
+  const prev = S.tools.get(x.tool);
+  x.startedAt = prev && TOOL_ACTIVE.includes(prev.phase) ? prev.startedAt : Date.now() - x.elapsedMs;
+  S.tools.set(x.tool, x);
+  renderToolTask(x);
+  renderStage();
+  if (x.phase === 'done') {
+    refreshInstances();
+    setTimeout(() => { if (S.tools.get(x.tool) === x) dismissToolTask(x.tool); }, 8000);
+  }
+}
+
+function dismissToolTask(tool) {
+  if (toolActive(tool)) return;
+  S.tools.delete(tool);
+  const el = document.getElementById(`tool-${tool}`);
+  if (el) { el.classList.add('out'); setTimeout(() => el.remove(), 220); }
+  renderStage();
+}
+
+function renderToolTask(x) {
+  let el = document.getElementById(`tool-${x.tool}`);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = `tool-${x.tool}`;
+    el.className = 'toast task';
+    el.setAttribute('role', 'status');
+    $('#toasts').appendChild(el);
+  }
+  const active = TOOL_ACTIVE.includes(x.phase);
+  const pct = toolPct(x);
+  const head = {
+    resolve: [`Descargando ${x.label}`, 'Buscando la versión más reciente'],
+    download: [`Descargando ${x.label}`, x.total ? `${mb(x.received)} de ${mb(x.total)} MB` : `${mb(x.received)} MB`],
+    extract: [`Instalando ${x.label}`, 'Descomprimiendo'],
+    done: [`${x.label} instalado`, x.version && x.version !== 'más reciente' ? `Versión ${x.version} · ${secs(x.elapsedMs)}` : secs(x.elapsedMs)],
+    error: [`No se pudo descargar ${x.label}`, ''],
+  }[x.phase];
+  const lead = active ? `<span class="task-ico">${spinner(16)}</span>`
+    : `<span class="dot ${x.phase === 'done' ? 'green' : 'danger'}"></span>`;
+  const bar = x.phase === 'error' ? ''
+    : `<div class="task-bar ${x.phase === 'download' && x.total ? '' : active ? 'indeterminate' : ''} ${x.phase === 'done' ? 'ok' : ''}"><div style="width:${x.phase === 'done' ? 100 : pct}%"></div></div>`;
+  el.innerHTML = `
+    <div class="task-row">
+      ${lead}
+      <div class="txt"><div class="task-title">${esc(head[0])}</div>
+        <div class="task-sub mono">${esc(head[1])}${active ? `${head[1] ? ' · ' : ''}<span data-elapsed="${x.startedAt}">${secs(Date.now() - x.startedAt)}</span>` : ''}</div></div>
+      ${x.phase === 'download' && x.total ? `<span class="task-pct mono">${pct} %</span>` : ''}
+      ${active ? '' : `<button class="icon-btn sm" data-act="tool-close" data-tool="${x.tool}" aria-label="Cerrar">${icon('close', 14)}</button>`}
+    </div>
+    ${bar}
+    ${x.phase === 'done' && x.path ? `<div class="task-msg mono xs faint selectable" style="overflow-wrap:anywhere">${esc(x.path)}</div>` : ''}
+    ${x.phase === 'error' ? `<div class="task-msg">${esc(x.message)}</div>
+      <div class="task-actions"><button class="btn sm" data-act="nav" data-view="log">Ver registro</button><button class="btn btn-secondary sm" data-act="install-tool" data-tool="${x.tool}">Reintentar</button></div>` : ''}`;
+}
+
+/* ------------------------------------------------------------------ */
 /* Acciones                                                            */
 /* ------------------------------------------------------------------ */
 async function saveSettings(mutate) {
@@ -939,6 +1026,12 @@ const actions = {
     invoke('install_apk_path', { serial: x.serial, path: x.path, mode }).catch((e) => toast('danger', e));
   },
   'task-close': (el) => dismissTask(Number(el.dataset.id)),
+  'install-tool': (el) => {
+    const tool = el.dataset.tool;
+    if (toolActive(tool)) return;
+    invoke('install_tool', { tool }).catch((e) => toast('danger', e));
+  },
+  'tool-close': (el) => dismissToolTask(el.dataset.tool),
   wifi: async (el) => {
     const d = selectedDevice();
     const ok = await confirmPop(el, { title: 'Activar depuración por Wi-Fi', text: 'Se ejecuta adb tcpip 5555 y se conecta a la IP del teléfono. Después puedes desconectar el cable.', ok: 'Activar', danger: false });
@@ -1022,6 +1115,9 @@ const actions = {
       } else if (a.startsWith('kill:')) {
         el.dataset.pid = a.slice(5);
         return actions.kill(el);
+      } else if (a.startsWith('install-tool:')) {
+        el.dataset.tool = a.slice(13);
+        return actions['install-tool'](el);
       } else if (a === 'shared-port') {
         await invoke('set_port', { port: 5037 });
         toast('success', 'Modo compartido en el puerto 5037');
@@ -1165,6 +1261,7 @@ async function init() {
     toast(level, text, path ? { label: 'Mostrar', run: () => invoke('open_path', { path }) } : undefined);
   });
   TAURI.event.listen('install', (e) => onInstallEvent(e.payload));
+  TAURI.event.listen('tool', (e) => onToolEvent(e.payload));
   TAURI.event.listen('log', (e) => {
     S.logs.push(e.payload);
     if (S.logs.length > 400) S.logs.shift();

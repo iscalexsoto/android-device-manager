@@ -44,11 +44,13 @@ pub fn sdk_adb_candidates() -> Vec<PathBuf> {
         .collect()
 }
 
-/// adb preferido: el del SDK (compartido con Android Studio) y luego el del PATH.
+/// adb preferido: el del SDK (compartido con Android Studio), luego el del PATH y
+/// por último el que haya descargado esta app.
 pub fn auto_adb() -> Option<PathBuf> {
     sdk_adb_candidates()
         .into_iter()
         .chain(find_in_path("adb.exe"))
+        .chain(crate::tools::adb_exe())
         .next()
 }
 
