@@ -1,0 +1,57 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch or PR cancels the build still running.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write # needed only to publish releases on v* tags
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins stable MSVC; `rustup show` installs it.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --locked
+
+      # Prebuilt Tauri CLI from npm: much faster than `cargo install tauri-cli`.
+      - name: Build app and NSIS installer
+        run: npx --yes @tauri-apps/cli@2 build
+
+      - name: Upload portable exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-device-manager-portable
+          path: target/release/android-device-manager.exe
+          if-no-files-found: error
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-device-manager-installer
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/bundle/nsis/*.exe
+            target/release/android-device-manager.exe
+          generate_release_notes: true
