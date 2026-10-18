@@ -44,6 +44,17 @@ Platform-Tools desde Google y la versión más reciente de scrcpy desde su relea
 `%LOCALAPPDATA%\com.soto.androiddevicemanager\tools`, sin pedir permisos de administrador.
 Si después instalas Android Studio, la app vuelve a usar el adb del SDK.
 
+## Descargar sin compilar
+
+GitHub Actions compila la app en Windows en cada push a `main` y en cada pull request.
+
+- **Versiones publicadas:** en [Releases](https://github.com/iscalexsoto/android-device-manager/releases)
+  están el instalador y el `.exe` portable. Se publica una al subir un tag `v*` (p. ej. `v1.0.1`).
+- **Builds de prueba:** abre la ejecución en la pestaña
+  [Actions](https://github.com/iscalexsoto/android-device-manager/actions) (o *Checks* en un PR)
+  y descarga `android-device-manager-installer` o `android-device-manager-portable`
+  desde *Artifacts*. Requiere haber iniciado sesión en GitHub; se conservan 90 días.
+
 ## Compilar y ejecutar
 
 ```bash
