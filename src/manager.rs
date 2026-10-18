@@ -2,16 +2,17 @@
 
 use crate::adb::{self, AdbVersion, Device, DeviceDetails, InstallFailure};
 use crate::instances::{self, InstancesReport, ScanInput};
+use crate::logcat::{self, LogLine};
 use crate::process::{self, Output};
 use crate::scrcpy;
 use crate::tools::{self, Tool};
-use crate::settings::{RecordOptions, ScrcpyOptions, Settings};
+use crate::settings::{LogcatOptions, RecordOptions, ScrcpyOptions, Settings};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -20,6 +21,10 @@ use tauri::{AppHandle, Emitter};
 const POLL_EVERY: Duration = Duration::from_millis(1500);
 const DETAILS_EVERY: Duration = Duration::from_secs(30);
 const LOG_MAX: usize = 400;
+/// Líneas de logcat que se conservan por dispositivo para exportar.
+const LOGCAT_KEEP: usize = 200_000;
+const LOGCAT_FLUSH_EVERY: Duration = Duration::from_millis(100);
+const LOGCAT_PIDS_EVERY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -103,6 +108,47 @@ pub struct InstallEvent {
     pub failure: Option<InstallFailure>,
 }
 
+/// Captura de logcat en curso de un dispositivo.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogcatInfo {
+    pub serial: String,
+    /// Identifica la captura: los lotes de una anterior se descartan.
+    pub session: u64,
+    pub started: i64,
+    /// Filtros de origen con los que se inició.
+    pub options: LogcatOptions,
+    /// Hay filtro por app y su proceso todavía no está en ejecución.
+    pub waiting: bool,
+    pub pids: Vec<u32>,
+}
+
+/// Lote de líneas nuevas, emitido como evento `logcat`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogcatBatch {
+    pub serial: String,
+    pub session: u64,
+    pub lines: Vec<LogLine>,
+}
+
+struct LogcatHandle {
+    info: LogcatInfo,
+    child: Child,
+    stopping: bool,
+    errors: Arc<Mutex<VecDeque<String>>>,
+}
+
+/// Estado que comparten el lector, el envío por lotes y el sondeo de PIDs.
+struct LogcatStream {
+    serial: String,
+    session: u64,
+    /// Vacío = sin filtro por app.
+    package: String,
+    pids: Mutex<HashSet<u32>>,
+    pending: Mutex<Vec<LogLine>>,
+}
+
 struct RecordingHandle {
     info: RecordingInfo,
     child: Child,
@@ -129,6 +175,7 @@ pub struct Snapshot {
     pub devices: Vec<DeviceView>,
     pub sessions: Vec<SessionInfo>,
     pub recordings: Vec<RecordingInfo>,
+    pub logcats: Vec<LogcatInfo>,
 }
 
 pub struct Core {
@@ -149,6 +196,11 @@ pub struct Core {
     versions: Mutex<HashMap<String, Option<AdbVersion>>>,
     /// Herramientas que se están descargando (adb, scrcpy).
     tool_installs: Mutex<HashSet<&'static str>>,
+    /// Capturas de logcat en curso por número de serie.
+    logcats: Mutex<HashMap<String, LogcatHandle>>,
+    /// Líneas capturadas por número de serie; se conservan al detener para exportarlas.
+    logcat_lines: Mutex<HashMap<String, VecDeque<LogLine>>>,
+    next_logcat: AtomicU64,
 }
 
 pub type Shared = Arc<Core>;
@@ -177,6 +229,9 @@ impl Core {
             next_log: std::sync::atomic::AtomicU64::new(1),
             versions: Mutex::new(HashMap::new()),
             tool_installs: Mutex::new(HashSet::new()),
+            logcats: Mutex::new(HashMap::new()),
+            logcat_lines: Mutex::new(HashMap::new()),
+            next_logcat: AtomicU64::new(1),
         })
     }
 
@@ -276,6 +331,7 @@ impl Core {
                 .collect(),
             sessions,
             recordings: self.recordings.lock().unwrap().values().map(|h| h.info.clone()).collect(),
+            logcats: self.logcats.lock().unwrap().values().map(|h| h.info.clone()).collect(),
         }
     }
 
@@ -1098,6 +1154,293 @@ impl Core {
     }
 
     // -------------------------------------------------------------------
+    // Logcat
+    // -------------------------------------------------------------------
+
+    /// Inicia (o reinicia) la captura de un dispositivo. Cada captura empieza vacía.
+    pub fn start_logcat(self: &Shared, serial: &str, options: LogcatOptions) -> Result<(), String> {
+        let package = options.package.trim().to_string();
+        if !package.is_empty() && !logcat::valid_package(&package) {
+            return Err("El paquete no es válido. Escríbelo como com.ejemplo.app".into());
+        }
+        let args = logcat::build_args(serial, &options)?;
+        let exe = self.adb_path().ok_or("No se encontró adb. Indica la ruta en Ajustes.")?;
+
+        if let Some(mut old) = self.logcats.lock().unwrap().remove(serial) {
+            let _ = old.child.kill();
+            let _ = old.child.wait();
+        }
+
+        let alive = if package.is_empty() {
+            HashSet::new()
+        } else {
+            self.package_pids(serial, &package).unwrap_or_default()
+        };
+
+        let mut cmd = process::command(&exe);
+        cmd.args(&args)
+            .envs(self.adb_env())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let shown = process::display_command(&exe, &args);
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                self.push_log(shown, None, Some(&e.to_string()));
+                return Err(format!("No se pudo iniciar logcat: {e}"));
+            }
+        };
+        self.push_log(shown, None, Some("iniciado"));
+
+        let session = self.next_logcat.fetch_add(1, Ordering::Relaxed);
+        let stream = Arc::new(LogcatStream {
+            serial: serial.to_string(),
+            session,
+            package: package.clone(),
+            pids: Mutex::new(alive.clone()),
+            pending: Mutex::new(Vec::new()),
+        });
+        self.logcat_lines.lock().unwrap().insert(serial.to_string(), VecDeque::new());
+
+        let errors = Arc::new(Mutex::new(VecDeque::new()));
+        if let Some(err) = child.stderr.take() {
+            let errors = errors.clone();
+            thread::spawn(move || {
+                for line in BufReader::new(err).lines().map_while(Result::ok) {
+                    let mut e = errors.lock().unwrap();
+                    e.push_back(line);
+                    while e.len() > 20 {
+                        e.pop_front();
+                    }
+                }
+            });
+        }
+        if let Some(out) = child.stdout.take() {
+            let core = self.clone();
+            let stream = stream.clone();
+            thread::spawn(move || core.read_logcat(out, &stream));
+        }
+
+        let mut pids: Vec<u32> = alive.into_iter().collect();
+        pids.sort_unstable();
+        let info = LogcatInfo {
+            serial: serial.to_string(),
+            session,
+            started: now_ms(),
+            options: LogcatOptions { package: package.clone(), ..options },
+            waiting: !package.is_empty() && pids.is_empty(),
+            pids,
+        };
+        self.logcats
+            .lock()
+            .unwrap()
+            .insert(serial.to_string(), LogcatHandle { info, child, stopping: false, errors });
+        self.emit_state();
+
+        let core = self.clone();
+        let s = stream.clone();
+        thread::spawn(move || core.watch_logcat(&s));
+        if !package.is_empty() {
+            let core = self.clone();
+            thread::spawn(move || core.poll_logcat_pids(&stream));
+        }
+        Ok(())
+    }
+
+    /// Detiene la captura; las líneas se conservan para exportarlas.
+    pub fn stop_logcat(&self, serial: &str) -> Result<(), String> {
+        if let Some(h) = self.logcats.lock().unwrap().get_mut(serial) {
+            h.stopping = true;
+            let _ = h.child.kill();
+        }
+        Ok(())
+    }
+
+    pub fn clear_logcat(&self, serial: &str) {
+        if let Some(lines) = self.logcat_lines.lock().unwrap().get_mut(serial) {
+            lines.clear();
+        }
+    }
+
+    /// Paquetes instalados por el usuario, para sugerirlos en el filtro por app.
+    pub fn logcat_packages(&self, serial: &str) -> Result<Vec<String>, String> {
+        let args = ["-s", serial, "shell", "pm list packages -3"].map(String::from);
+        let out = self.run_adb(&args, Duration::from_secs(15), true)?;
+        Ok(logcat::parse_packages(&out.stdout_text()))
+    }
+
+    /// Líneas capturadas que pasan el filtro de vista, tal cual las imprimió logcat.
+    pub fn logcat_matching(&self, serial: &str, query: &str, min_level: &str) -> Vec<String> {
+        let query = query.trim().to_lowercase();
+        let min = logcat::level_rank(min_level);
+        self.logcat_lines
+            .lock()
+            .unwrap()
+            .get(serial)
+            .map(|lines| {
+                lines
+                    .iter()
+                    .filter(|l| logcat::matches(l, &query, min))
+                    .map(|l| l.raw.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn logcat_file_name(&self, serial: &str) -> String {
+        format!("logcat_{}.txt", self.file_stem_for(serial))
+    }
+
+    fn logcat_current(&self, stream: &LogcatStream) -> bool {
+        self.logcats
+            .lock()
+            .unwrap()
+            .get(&stream.serial)
+            .is_some_and(|h| h.info.session == stream.session)
+    }
+
+    /// PIDs vivos del paquete. None si no se pudo consultar (se conserva lo anterior).
+    fn package_pids(&self, serial: &str, package: &str) -> Option<HashSet<u32>> {
+        let shell = |cmd: &str| {
+            let args = ["-s", serial, "shell", cmd].map(String::from);
+            self.run_adb(&args, Duration::from_secs(8), true).ok().filter(|o| !o.timed_out)
+        };
+        let text = shell("ps -A -o PID,NAME")?.stdout_text();
+        if text.lines().count() >= 5 {
+            return Some(logcat::parse_pids(&text, package));
+        }
+        // El ps de Android 7 o anterior no entiende -A ni -o.
+        Some(logcat::parse_pids(&shell("ps")?.stdout_text(), package))
+    }
+
+    fn read_logcat(&self, out: impl std::io::Read, stream: &LogcatStream) {
+        let mut reader = BufReader::new(out);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+            let line = logcat::parse_line(&String::from_utf8_lossy(&buf));
+            if !stream.package.is_empty() {
+                // El aviso "Start proc" de ActivityManager se muestra y suma el PID nuevo.
+                if let Some(pid) = logcat::started_pid(&line.message, &stream.package) {
+                    if stream.pids.lock().unwrap().insert(pid) {
+                        self.mark_logcat_pid(stream, pid);
+                    }
+                } else if !line.pid.is_some_and(|p| stream.pids.lock().unwrap().contains(&p)) {
+                    continue;
+                }
+            }
+            stream.pending.lock().unwrap().push(line);
+        }
+    }
+
+    /// Envía las líneas pendientes en lotes y detecta el fin del proceso.
+    fn watch_logcat(&self, stream: &LogcatStream) {
+        loop {
+            thread::sleep(LOGCAT_FLUSH_EVERY);
+            let status = {
+                let mut logcats = self.logcats.lock().unwrap();
+                match logcats.get_mut(&stream.serial) {
+                    Some(h) if h.info.session == stream.session => h.child.try_wait(),
+                    _ => return,
+                }
+            };
+            if matches!(status, Ok(None)) {
+                self.flush_logcat(stream);
+                continue;
+            }
+            // Da tiempo al lector para vaciar lo que quedó en la tubería.
+            thread::sleep(Duration::from_millis(250));
+            self.flush_logcat(stream);
+            let ended = {
+                let mut logcats = self.logcats.lock().unwrap();
+                match logcats.get(&stream.serial) {
+                    Some(h) if h.info.session == stream.session => logcats.remove(&stream.serial),
+                    _ => None,
+                }
+            };
+            if let Some(h) = ended {
+                if !h.stopping {
+                    let errors: Vec<String> = h.errors.lock().unwrap().iter().cloned().collect();
+                    self.push_log(format!("logcat · {}", stream.serial), None, Some(&errors.join("\n")));
+                    let detail = errors.last().map(|e| format!(": {e}")).unwrap_or_default();
+                    self.toast("warning", format!("El logcat de {} se detuvo{detail}", self.device_label(&stream.serial)));
+                }
+                self.emit_state();
+            }
+            return;
+        }
+    }
+
+    fn flush_logcat(&self, stream: &LogcatStream) {
+        let lines = std::mem::take(&mut *stream.pending.lock().unwrap());
+        if lines.is_empty() {
+            return;
+        }
+        {
+            let logcats = self.logcats.lock().unwrap();
+            if !logcats.get(&stream.serial).is_some_and(|h| h.info.session == stream.session) {
+                return;
+            }
+            let mut all = self.logcat_lines.lock().unwrap();
+            let kept = all.entry(stream.serial.clone()).or_default();
+            kept.extend(lines.iter().cloned());
+            let excess = kept.len().saturating_sub(LOGCAT_KEEP);
+            kept.drain(..excess);
+        }
+        let batch = LogcatBatch { serial: stream.serial.clone(), session: stream.session, lines };
+        let _ = self.app.emit("logcat", batch);
+    }
+
+    /// Sigue a la app con `ps`: detecta cuándo arranca y cuándo termina.
+    /// Los PIDs que ya se vieron siguen filtrando, para no perder el rastro de un cierre.
+    fn poll_logcat_pids(&self, stream: &LogcatStream) {
+        loop {
+            thread::sleep(LOGCAT_PIDS_EVERY);
+            if !self.logcat_current(stream) {
+                return;
+            }
+            let Some(alive) = self.package_pids(&stream.serial, &stream.package) else { continue };
+            stream.pids.lock().unwrap().extend(alive.iter().copied());
+            let mut alive: Vec<u32> = alive.into_iter().collect();
+            alive.sort_unstable();
+            let changed = {
+                let mut logcats = self.logcats.lock().unwrap();
+                match logcats.get_mut(&stream.serial) {
+                    Some(h) if h.info.session == stream.session && h.info.pids != alive => {
+                        h.info.waiting = alive.is_empty();
+                        h.info.pids = alive;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if changed {
+                self.emit_state();
+            }
+        }
+    }
+
+    fn mark_logcat_pid(&self, stream: &LogcatStream, pid: u32) {
+        {
+            let mut logcats = self.logcats.lock().unwrap();
+            let Some(h) = logcats.get_mut(&stream.serial).filter(|h| h.info.session == stream.session) else {
+                return;
+            };
+            if !h.info.pids.contains(&pid) {
+                h.info.pids.push(pid);
+                h.info.pids.sort_unstable();
+            }
+            h.info.waiting = false;
+        }
+        self.emit_state();
+    }
+
+    // -------------------------------------------------------------------
     // Instancias de adb
     // -------------------------------------------------------------------
 
@@ -1129,6 +1472,11 @@ impl Core {
 
     /// Al salir: detiene el servidor aislado si así se configuró.
     pub fn shutdown(&self) {
+        for h in self.logcats.lock().unwrap().values_mut() {
+            h.stopping = true;
+            let _ = h.child.kill();
+        }
+
         // Cierra las grabaciones en curso para no dejar videos sin índice.
         let pids: Vec<u32> = self.recordings.lock().unwrap().values().map(|h| h.info.pid).collect();
         for pid in &pids {

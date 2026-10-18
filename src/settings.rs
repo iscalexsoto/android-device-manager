@@ -35,6 +35,33 @@ pub struct RecordOptions {
     pub bit_rate: u32,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LogcatOptions {
+    /// Paquete de la app a seguir; vacío = todo el dispositivo.
+    pub package: String,
+    /// Filterspecs como en el CLI, p. ej. "ActivityManager:I MiTag:D *:S".
+    pub spec: String,
+    /// default (main, system, crash) | all | crash
+    pub buffer: String,
+    /// recent (últimas líneas) | all (todo el búfer) | none (solo lo nuevo)
+    pub history: String,
+    /// Nivel mínimo que se muestra: V D I W E F. Es filtro de vista, no reinicia la captura.
+    pub min_level: String,
+}
+
+impl Default for LogcatOptions {
+    fn default() -> Self {
+        Self {
+            package: String::new(),
+            spec: String::new(),
+            buffer: "default".into(),
+            history: "recent".into(),
+            min_level: "V".into(),
+        }
+    }
+}
+
 impl Default for RecordOptions {
     fn default() -> Self {
         Self { audio: true, format: "mp4".into(), max_size: 0, bit_rate: 8 }
@@ -74,6 +101,7 @@ pub struct Settings {
     pub theme: String,
     pub scrcpy: ScrcpyOptions,
     pub record: RecordOptions,
+    pub logcat: LogcatOptions,
 }
 
 impl Default for Settings {
@@ -88,6 +116,7 @@ impl Default for Settings {
             theme: "system".into(),
             scrcpy: ScrcpyOptions::default(),
             record: RecordOptions::default(),
+            logcat: LogcatOptions::default(),
         }
     }
 }
