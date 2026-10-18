@@ -39,6 +39,9 @@ const P = {
   record: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/>',
   trash: '<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 12.5h9l1-12.5"/>',
+  logcat: '<path d="M4 5.5h16M4 10h10M4 14.5h16M4 19h7"/>',
+  export: '<path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"/>',
+  down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
 };
 function icon(name, size = 18, sw = 1.75) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`;
@@ -62,6 +65,11 @@ const S = {
   busy: new Set(),    // acciones en curso
   installs: new Map(), // id -> último evento `install`
   tools: new Map(),    // adb | scrcpy -> último evento `tool`
+  lc: {},              // serial -> { session, lines: [] } de logcat
+  lcPackages: {},      // serial -> paquetes instalados (sugerencias)
+  lcQuery: '',         // búsqueda de texto en logcat
+  lcMin: null,         // nivel mínimo mostrado
+  lcFollow: true,      // seguir al final mientras llegan líneas
 };
 
 const INSTALL_ACTIVE = ['uninstall', 'copy', 'install'];
@@ -170,6 +178,8 @@ function renderChrome() {
     ${r('device', 'phone', 'Dispositivo')}
     ${r('mirror', 'screens', 'Pantallas y grabaciones',
       recording ? '<span class="badge-dot pulse" style="background:var(--danger)"></span>' : sessions ? `<span class="badge">${sessions}</span>` : '')}
+    ${r('logcat', 'logcat', 'Logcat',
+      (S.snap?.logcats?.length || 0) ? '<span class="badge-dot pulse" style="background:var(--green)"></span>' : '')}
     <div class="rail-div"></div>
     ${r('adb', 'server', 'Servidor ADB', worst ? `<span class="badge-dot" style="background:var(--${worst})"></span>` : '')}
     ${r('log', 'log', 'Registro')}
@@ -214,7 +224,7 @@ function renderStage() {
     stage.innerHTML = '';
     stage.scrollTop = 0;
   }
-  ({ device: viewDevice, mirror: viewMirror, adb: viewAdb, log: viewLog, settings: viewSettings })[S.view](stage);
+  ({ device: viewDevice, mirror: viewMirror, logcat: viewLogcat, adb: viewAdb, log: viewLog, settings: viewSettings })[S.view](stage);
 }
 
 /* ---- Dispositivo ---- */
@@ -493,6 +503,186 @@ function viewAdb(stage) {
     <div class="card"><div class="card-head"><div class="card-title grow">Procesos adb en ejecución</div><span class="mono xs faint">${r.processes.length}</span></div>${procs}</div>
     <div class="card"><div class="card-head"><div class="card-title grow">Binarios adb en el equipo</div><span class="mono xs faint">${r.binaries.length}</span></div>${bins}</div>
   </div>`);
+}
+
+/* ---- Logcat ---- */
+const LC_KEEP = 50000;   // líneas que guarda la interfaz por dispositivo
+const LC_DOM = 4000;     // filas que se pintan a la vez
+const LC_LEVELS = [['V', 'Verbose'], ['D', 'Debug'], ['I', 'Info'], ['W', 'Warning'], ['E', 'Error'], ['F', 'Fatal']];
+const lcRank = (level) => Math.max(0, LC_LEVELS.findIndex(([l]) => l === level));
+const logcatOf = (serial) => (S.snap?.logcats ?? []).find((x) => x.serial === serial);
+const lcStore = (serial) => S.lc[serial] || (S.lc[serial] = { session: 0, lines: [] });
+const lcMin = () => S.lcMin ?? S.snap?.settings?.logcat?.minLevel ?? 'V';
+/** Mismo texto que `search_text` en logcat.rs: lo exportado coincide con lo visible. */
+const searchText = (l) => `${l.time} ${l.pid ?? ''} ${l.tid ?? ''} ${l.level} ${l.tag}: ${l.message}`.toLowerCase();
+function lcFilter() {
+  const min = lcRank(lcMin());
+  const q = S.lcQuery.trim().toLowerCase();
+  return (l) => lcRank(l.level) >= min && (!q || searchText(l).includes(q));
+}
+function lcRow(l) {
+  if (!l.level) return `<div class="lc-row lc-plain"><span class="lc-msg">${esc(l.message)}</span></div>`;
+  return `<div class="lc-row lv-${l.level}"><span class="lc-time">${esc(l.time)}</span><span class="lc-pid">${l.pid} ${l.tid}</span><span class="lc-lv">${l.level}</span><span class="lc-tag" title="${esc(l.tag)}">${esc(l.tag)}</span><span class="lc-msg">${esc(l.message)}</span></div>`;
+}
+/** Filtros de origen tal como están en el formulario (aunque no se hayan guardado). */
+function lcFormOptions() {
+  const o = { ...S.snap.settings.logcat, minLevel: lcMin() };
+  document.querySelectorAll('[data-lc]').forEach((el) => { o[el.dataset.lc] = el.value.trim(); });
+  return o;
+}
+const LC_SOURCE = ['package', 'spec', 'buffer', 'history'];
+const lcDirty = (info) => info && LC_SOURCE.some((k) => (S.snap.settings.logcat[k] ?? '').trim() !== (info.options[k] ?? '').trim());
+
+function viewLogcat(stage) {
+  const d = selectedDevice();
+  if (!d) {
+    stage.dataset.serial = '';
+    patch(stage, `<div class="empty">
+      <img src="logo.svg" alt="">
+      <h2>Sin dispositivo</h2>
+      <p>Conecta un teléfono o emulador para ver su logcat.</p>
+    </div>`);
+    return;
+  }
+  if (S.lcMin == null) S.lcMin = S.snap.settings.logcat?.minLevel || 'V';
+
+  // Estructura estable: el área de líneas se crea una vez por dispositivo y se le agregan filas.
+  if (stage.dataset.serial !== d.serial || !$('#lc-out', stage)) {
+    stage.dataset.serial = d.serial;
+    stage._html = null;
+    stage.scrollTop = 0;
+    stage.innerHTML = `<div class="view lc-view">
+      <div id="lc-head"></div>
+      <div id="lc-filters"></div>
+      <div class="card lc-card" id="lc-card">
+        <div class="card-head lc-bar">
+          <div id="lc-levels"></div>
+          <label class="lc-search">${icon('search', 14)}<input class="input mono" id="lc-search" placeholder="Buscar texto, tag o PID" spellcheck="false" value="${esc(S.lcQuery)}"></label>
+          <div class="grow"></div>
+          <span class="mono faint xs" id="lc-count"></span>
+        </div>
+        <div class="lc-out mono" id="lc-out"></div>
+        <button class="btn btn-secondary sm lc-jump" data-act="lc-bottom">${icon('down', 14)}Ir al final</button>
+      </div>
+    </div>`;
+    const out = $('#lc-out');
+    out.addEventListener('scroll', () => {
+      S.lcFollow = out.scrollTop + out.clientHeight >= out.scrollHeight - 24;
+      $('#lc-card')?.classList.toggle('scrolled', !S.lcFollow);
+    });
+    S.lcFollow = true;
+    lcRebuild();
+    if (isOnline(d) && !S.lcPackages[d.serial]) {
+      S.lcPackages[d.serial] = [];
+      invoke('logcat_packages', { serial: d.serial })
+        .then((list) => { S.lcPackages[d.serial] = list; if (S.view === 'logcat') renderStage(); })
+        .catch(() => { delete S.lcPackages[d.serial]; });
+    }
+  }
+
+  const on = isOnline(d);
+  const info = logcatOf(d.serial);
+  const o = S.snap.settings.logcat;
+  const busy = S.busy.has('logcat');
+  const hasLines = lcStore(d.serial).lines.length > 0;
+  let chip = '<span class="chip"><span class="dot"></span>Detenido</span>';
+  if (info?.waiting) chip = `<span class="chip"><span class="dot orange pulse"></span>Esperando a que ${esc(info.options.package)} se ejecute</span>`;
+  else if (info) chip = `<span class="chip"><span class="dot green pulse"></span>Capturando <span class="mono" data-since="${info.started}">${fmtDur(Date.now() - info.started)}</span></span>`;
+  const sub = [deviceName(d), info?.options.package && (info.pids.length ? `${info.options.package} · PID ${info.pids.join(', ')}` : info.options.package)].filter(Boolean).join(' · ');
+
+  patch($('#lc-head'), `<div class="page-head">
+    <div class="grow col" style="gap:4px"><div class="page-title">Logcat</div><div class="page-sub">${esc(sub)}</div></div>
+    <div class="row">
+      ${chip}
+      <button class="icon-btn" data-act="lc-clear" data-tip="Limpiar" ${hasLines ? '' : 'disabled'}>${icon('trash')}</button>
+      <button class="btn btn-secondary sm" data-act="lc-export" ${hasLines ? '' : 'disabled'}>${S.busy.has('lc-export') ? spinner(16) : icon('export', 16)}Exportar</button>
+      ${info
+        ? `<button class="btn btn-danger sm" data-act="lc-stop">${icon('stop', 16)}Detener</button>`
+        : `<button class="btn btn-primary sm" data-act="lc-start" ${on && !busy ? '' : 'disabled'}>${busy ? spinner(16) : icon('play', 16)}Iniciar</button>`}
+    </div>
+  </div>`);
+
+  const sel = (key, opts) => `<select class="select" data-lc="${key}">${opts.map(([v, l]) => `<option value="${v}" ${o[key] === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  const pkgs = S.lcPackages[d.serial] || [];
+  patch($('#lc-filters'), `<div class="card">
+    <div class="lc-filters">
+      <div class="field"><label>App</label>
+        <input class="input mono" data-lc="package" list="lc-packages" value="${esc(o.package)}" placeholder="Todas · com.ejemplo.app" spellcheck="false">
+        <datalist id="lc-packages">${pkgs.map((p) => `<option value="${esc(p)}">`).join('')}</datalist></div>
+      <div class="field"><label>Filtros (filterspec)</label>
+        <input class="input mono" data-lc="spec" value="${esc(o.spec)}" placeholder="ActivityManager:I MiTag:D *:S" spellcheck="false"></div>
+      <div class="field"><label>Búfer</label>${sel('buffer', [['default', 'main, system y crash'], ['all', 'Todos'], ['crash', 'Solo crashes']])}</div>
+      <div class="field"><label>Al iniciar</label>${sel('history', [['recent', 'Últimas 500 líneas'], ['all', 'Todo el búfer'], ['none', 'Solo lo nuevo']])}</div>
+    </div>
+    ${lcDirty(info)
+      ? `<div class="lc-note"><span class="dot orange"></span><span class="grow small muted">Cambiaste los filtros. Reinicia la captura para aplicarlos (empieza de cero).</span><button class="btn btn-secondary sm" data-act="lc-start">Aplicar</button></div>`
+      : `<div class="lc-note"><span class="grow small faint">App y filtros se aplican al iniciar, como en <span class="mono">adb logcat</span>. Nivel y búsqueda filtran al momento lo que ya llegó.</span></div>`}
+  </div>`);
+
+  patch($('#lc-levels'), `<div class="seg sm" data-tip="Nivel mínimo">${LC_LEVELS.map(([l, name]) =>
+    `<button class="mono ${lcMin() === l ? 'on' : ''}" data-act="lc-level" data-level="${l}" data-tip="${name} o más">${l}</button>`).join('')}</div>`);
+
+  const out = $('#lc-out');
+  out.dataset.empty = info?.waiting
+    ? `Esperando a que ${info.options.package} se ejecute. Ábrela en el teléfono.`
+    : info ? 'Esperando líneas…'
+    : on ? 'Pulsa Iniciar para capturar el logcat de este dispositivo.'
+    : 'El dispositivo no está en línea.';
+}
+
+/** Vuelve a pintar las líneas con los filtros de vista actuales. */
+function lcRebuild() {
+  const out = $('#lc-out');
+  if (!out || !S.selected) return;
+  const all = lcStore(S.selected).lines;
+  const shown = all.filter(lcFilter());
+  out.innerHTML = shown.slice(-LC_DOM).map(lcRow).join('');
+  S.lcShown = shown.length;
+  lcCount();
+  if (S.lcFollow) out.scrollTop = out.scrollHeight;
+}
+
+function lcCount() {
+  const el = $('#lc-count');
+  if (!el || !S.selected) return;
+  const total = lcStore(S.selected).lines.length;
+  const n = (x) => x.toLocaleString('es');
+  let text = S.lcShown === total ? `${n(total)} líneas` : `${n(S.lcShown)} de ${n(total)} líneas`;
+  if (S.lcShown > LC_DOM) text += ` · se ven las últimas ${n(LC_DOM)}`;
+  el.textContent = total ? text : '';
+}
+
+function onLogcatBatch({ serial, session, lines }) {
+  const st = lcStore(serial);
+  if (session < st.session) return; // lote de una captura anterior
+  const visible = S.view === 'logcat' && S.selected === serial && $('#lc-out');
+  if (session > st.session) {
+    st.session = session;
+    st.lines = [];
+    if (visible) lcRebuild();
+  }
+  for (const l of lines) st.lines.push(l);
+  if (st.lines.length > LC_KEEP + 5000) {
+    st.lines.splice(0, st.lines.length - LC_KEEP);
+    if (visible) return lcRebuild();
+  }
+  if (!visible) return;
+  const out = $('#lc-out');
+  const fresh = lines.filter(lcFilter());
+  S.lcShown += fresh.length;
+  if (fresh.length) {
+    out.insertAdjacentHTML('beforeend', fresh.slice(-LC_DOM).map(lcRow).join(''));
+    const excess = out.childElementCount - LC_DOM;
+    if (excess > 0) {
+      const range = document.createRange();
+      range.setStartBefore(out.firstElementChild);
+      range.setEndAfter(out.children[excess - 1]);
+      range.deleteContents();
+    }
+    if (S.lcFollow) out.scrollTop = out.scrollHeight;
+  }
+  lcCount();
+  if (st.lines.length === lines.length) renderStage(); // primeras líneas: habilita Limpiar y Exportar
 }
 
 /* ---- Registro ---- */
@@ -961,7 +1151,7 @@ const actions = {
   },
   select: (el) => {
     S.selected = el.dataset.serial;
-    if (S.view !== 'device') S.view = 'device';
+    if (S.view !== 'device' && S.view !== 'logcat') S.view = 'device';
     render();
   },
 
@@ -1148,6 +1338,51 @@ const actions = {
     refreshInstances();
   },
 
+  'lc-start': () => {
+    const d = selectedDevice();
+    if (!isOnline(d)) return;
+    const options = lcFormOptions();
+    return run('logcat', async () => {
+      await saveSettings((s) => { s.logcat = options; });
+      S.lcFollow = true;
+      await invoke('start_logcat', { serial: d.serial, options });
+    });
+  },
+  'lc-stop': () => {
+    const d = selectedDevice();
+    if (d) invoke('stop_logcat', { serial: d.serial }).catch((e) => toast('danger', e));
+  },
+  'lc-clear': async () => {
+    const d = selectedDevice();
+    if (!d) return;
+    await invoke('clear_logcat', { serial: d.serial });
+    lcStore(d.serial).lines = [];
+    lcRebuild();
+    renderStage();
+  },
+  'lc-export': () => {
+    const d = selectedDevice();
+    if (!d) return;
+    return run('lc-export', async () => {
+      renderStage();
+      const path = await invoke('export_logcat', { serial: d.serial, query: S.lcQuery, minLevel: lcMin() });
+      if (path) toast('success', `Logcat exportado · ${path.split('\\').pop()}`, { label: 'Mostrar', run: () => invoke('open_path', { path }) });
+    }).finally(() => { if (S.view === 'logcat') renderStage(); });
+  },
+  'lc-level': (el) => {
+    S.lcMin = el.dataset.level;
+    saveSettings((s) => { s.logcat.minLevel = S.lcMin; });
+    renderStage();
+    lcRebuild();
+  },
+  'lc-bottom': () => {
+    const out = $('#lc-out');
+    if (!out) return;
+    S.lcFollow = true;
+    out.scrollTop = out.scrollHeight;
+    $('#lc-card')?.classList.remove('scrolled');
+  },
+
   'log-toggle': (el) => {
     const id = Number(el.dataset.id);
     S.openLogs.has(id) ? S.openLogs.delete(id) : S.openLogs.add(id);
@@ -1192,6 +1427,10 @@ document.addEventListener('change', (e) => {
     const key = t.dataset.opt;
     const val = t.type === 'checkbox' ? t.checked : Number(t.value);
     saveSettings((s) => { s.scrcpy[key] = val; });
+  } else if (t.dataset.lc) {
+    const key = t.dataset.lc;
+    const val = t.value.trim();
+    saveSettings((s) => { s.logcat[key] = val; });
   } else if (t.dataset.set) {
     const key = t.dataset.set;
     const val = t.type === 'checkbox' ? t.checked : t.value.trim();
@@ -1236,6 +1475,19 @@ document.addEventListener('keydown', (e) => {
   if (e.target.id === 'port-input' && e.key === 'Enter') actions['apply-port']();
 });
 
+// Logcat: búsqueda al escribir, Enter en un filtro inicia o aplica, Ctrl+F busca.
+let lcSearchTimer = null;
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'lc-search') return;
+  clearTimeout(lcSearchTimer);
+  lcSearchTimer = setTimeout(() => { S.lcQuery = e.target.value; lcRebuild(); }, 150);
+});
+document.addEventListener('keydown', (e) => {
+  if (S.view !== 'logcat') return;
+  if (e.key === 'Enter' && e.target.dataset?.lc) { e.target.blur(); actions['lc-start'](); }
+  if (e.key === 'f' && e.ctrlKey) { e.preventDefault(); $('#lc-search')?.focus(); }
+});
+
 /* ------------------------------------------------------------------ */
 /* Arranque                                                            */
 /* ------------------------------------------------------------------ */
@@ -1262,6 +1514,7 @@ async function init() {
   });
   TAURI.event.listen('install', (e) => onInstallEvent(e.payload));
   TAURI.event.listen('tool', (e) => onToolEvent(e.payload));
+  TAURI.event.listen('logcat', (e) => onLogcatBatch(e.payload));
   TAURI.event.listen('log', (e) => {
     S.logs.push(e.payload);
     if (S.logs.length > 400) S.logs.shift();
