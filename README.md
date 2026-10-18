@@ -10,7 +10,7 @@ servidor adb **sin pelearte con Android Studio**.
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-2024-CE422B?logo=rust&logoColor=white)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
-![Versión](https://img.shields.io/badge/versi%C3%B3n-1.0.0-3DDC84?logo=android&logoColor=white)
+![Versión](https://img.shields.io/badge/versi%C3%B3n-1.0.1-3DDC84?logo=android&logoColor=white)
 ![Licencia MIT](https://img.shields.io/badge/licencia-MIT-yellow)
 
 </div>
