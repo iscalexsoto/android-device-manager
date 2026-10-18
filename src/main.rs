@@ -3,6 +3,7 @@
 mod adb;
 mod manager;
 mod instances;
+mod logcat;
 mod process;
 mod scrcpy;
 mod settings;
@@ -10,7 +11,7 @@ mod tools;
 
 use crate::manager::{Core, LogEntry, Shared, Snapshot};
 use crate::instances::InstancesReport;
-use crate::settings::{RecordOptions, ScrcpyOptions, Settings};
+use crate::settings::{LogcatOptions, RecordOptions, ScrcpyOptions, Settings};
 use std::time::Duration;
 use tauri::{AppHandle, Manager, RunEvent, State};
 use tauri_plugin_dialog::DialogExt;
@@ -208,6 +209,65 @@ async fn external_mirror(core: State<'_, Shared>, pid: u32, action: String) -> R
 }
 
 #[tauri::command]
+async fn start_logcat(core: State<'_, Shared>, serial: String, options: LogcatOptions) -> R<()> {
+    let c = core.inner().clone();
+    blocking(move || c.start_logcat(&serial, options)).await
+}
+
+#[tauri::command]
+fn stop_logcat(core: State<Shared>, serial: String) -> R<()> {
+    core.stop_logcat(&serial)
+}
+
+#[tauri::command]
+fn clear_logcat(core: State<Shared>, serial: String) {
+    core.clear_logcat(&serial)
+}
+
+#[tauri::command]
+async fn logcat_packages(core: State<'_, Shared>, serial: String) -> R<Vec<String>> {
+    let c = core.inner().clone();
+    blocking(move || c.logcat_packages(&serial)).await
+}
+
+/// Guarda en el archivo que elija el usuario las líneas que pasan el filtro de vista.
+#[tauri::command]
+async fn export_logcat(
+    app: AppHandle,
+    core: State<'_, Shared>,
+    serial: String,
+    query: String,
+    min_level: String,
+) -> R<Option<String>> {
+    let c = core.inner().clone();
+    blocking(move || {
+        let lines = c.logcat_matching(&serial, &query, &min_level);
+        if lines.is_empty() {
+            return Err("No hay líneas que exportar con los filtros actuales".into());
+        }
+        let mut dlg = app
+            .dialog()
+            .file()
+            .set_title("Exportar logcat")
+            .set_file_name(c.logcat_file_name(&serial))
+            .add_filter("Registro de texto", &["txt", "log"]);
+        let dir = c.settings().capture_dir();
+        if dir.is_dir() {
+            dlg = dlg.set_directory(dir);
+        }
+        let picked = dlg.blocking_save_file();
+        let Some(path) = picked.and_then(|p| p.as_path().map(|p| p.to_path_buf())) else {
+            return Ok(None);
+        };
+        let mut text = lines.join("\n");
+        text.push('\n');
+        std::fs::write(&path, text).map_err(|e| format!("No se pudo guardar el archivo: {e}"))?;
+        Ok(Some(path.display().to_string()))
+    })
+    .await
+}
+
+#[tauri::command]
 async fn install_tool(core: State<'_, Shared>, tool: String) -> R<()> {
     let c = core.inner().clone();
     blocking(move || c.install_tool(&tool)).await
@@ -297,6 +357,11 @@ fn main() {
             external_mirror,
             start_recording,
             stop_recording,
+            start_logcat,
+            stop_logcat,
+            clear_logcat,
+            logcat_packages,
+            export_logcat,
             install_tool,
             pick_path,
             detect_paths,

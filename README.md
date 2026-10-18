@@ -21,6 +21,7 @@ servidor adb **sin pelearte con Android Studio**.
 
 - 📱 **Panel de dispositivos**: estado, versión de Android/SDK, pantalla, batería, IP y una consola `adb shell`.
 - 🖥️ **Espejo de pantalla** con scrcpy y sus opciones más útiles a mano.
+- 📜 **Logcat** en vivo: filtra por app (aunque se reinicie), con filterspecs como en el CLI, por nivel y por texto; detén la captura y expórtala a un archivo.
 - 📸 **Capturas y video**: PNG al instante y grabación en MP4/MKV, con audio en Android 11+.
 - 📦 **Instalación de APK con progreso real**, errores explicados y un botón para corregirlos.
 - 📶 **Depuración por Wi-Fi**: conectar y emparejar por IP.
@@ -92,6 +93,7 @@ cargo test
 |---|---|
 | **Dispositivo** | Estado, Android/SDK, pantalla, batería, IP; opciones de scrcpy; consola `adb shell` |
 | **Barra superior** | Ver pantalla, captura (PNG), grabar video, instalar APK, depuración por Wi-Fi, reiniciar (normal/recovery/bootloader), conectar y emparejar por IP |
+| **Logcat** | Captura en vivo por dispositivo: app, filterspec (`MiTag:D *:S`), búfer e historial al iniciar; nivel mínimo y búsqueda al momento; exportar lo visible a `.txt` |
 | **Pantallas** | Sesiones de scrcpy abiertas (propias y externas) y grabaciones en curso: traer al frente, cerrar, detener |
 | **Servidor ADB** | Estado, iniciar/reiniciar/detener, modo compartido o aislado, diagnóstico de conflictos, procesos `adb.exe` con puerto y versión, binarios adb del equipo |
 | **Registro** | Cada comando de adb/scrcpy ejecutado, con código de salida, duración y salida |
@@ -175,6 +177,7 @@ src/
   manager.rs     estado: servidor, dispositivos, sesiones scrcpy, registro, sondeo
   adb.rs         localización de adb, protocolo del servidor, parseo de salidas
   scrcpy.rs      localización de scrcpy, argumentos, cierre/foco de su ventana
+  logcat.rs      argumentos, filtros y lectura de logcat (formato threadtime)
   instances.rs   procesos adb, puertos en escucha, binarios y conflictos
   process.rs     ejecución sin consola y con tiempo límite
   settings.rs    preferencias (%APPDATA%\com.soto.androiddevicemanager\settings.json)
