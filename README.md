@@ -10,7 +10,7 @@ servidor adb **sin pelearte con Android Studio**.
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-2024-CE422B?logo=rust&logoColor=white)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
-![Versión](https://img.shields.io/badge/versi%C3%B3n-1.0.1-3DDC84?logo=android&logoColor=white)
+![Versión](https://img.shields.io/badge/versi%C3%B3n-1.0.2-3DDC84?logo=android&logoColor=white)
 ![Licencia MIT](https://img.shields.io/badge/licencia-MIT-yellow)
 
 </div>
@@ -80,7 +80,7 @@ La app avisa cuando hay una versión nueva en
 - En una compilación de depuración (`cargo run`) solo se avisa; no se reemplaza nada.
 
 Para publicar una versión: sube la versión en `Cargo.toml`, `tauri.conf.json` y la insignia del
-README, intégrala en `main` y sube el tag (`git tag v1.2.0 && git push origin v1.2.0`). El
+README, intégrala en `main` y sube el tag (`git tag v1.0.3 && git push origin v1.0.3`). El
 workflow compila y publica la release con el instalador y el portable; a partir de ahí las
 copias instaladas la ven en su siguiente comprobación.
 
