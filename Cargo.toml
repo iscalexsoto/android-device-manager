@@ -1,6 +1,6 @@
 [package]
 name = "android-device-manager"
-version = "1.0.1"
+version = "1.0.2"
 description = "Administrador de dispositivos Android por adb, con espejo de pantalla por scrcpy"
 edition = "2024"
 license = "MIT"

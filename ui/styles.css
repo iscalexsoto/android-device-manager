@@ -62,6 +62,15 @@ input, select, textarea { font: inherit; color: inherit; }
 .chip .mono { font-size: 11px; color: var(--ink-3); }
 .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--ink-3); flex: none; }
 .chip .dot { width: 7px; height: 7px; }
+.upd-chip { gap: 6px; cursor: pointer; color: var(--primary); border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); background: color-mix(in srgb, var(--primary) 8%, var(--chrome)); transition: background 140ms ease-out; }
+.upd-chip:hover { background: color-mix(in srgb, var(--primary) 14%, var(--chrome)); }
+.upd-chip[hidden] { display: none; }
+.upd-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.upd-status { flex: 1; min-width: 0; line-height: 1.6; color: var(--ink-2); overflow-wrap: anywhere; }
+.upd-status .dot { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.upd-status b { color: var(--ink); }
+.upd-bar { padding: 0 18px 14px 214px; }
+.upd-bar .task-bar { margin: 0; }
 .dot.green { background: var(--green); }
 .dot.orange { background: var(--orange); }
 .dot.danger { background: var(--danger); }
@@ -351,9 +360,13 @@ input, select, textarea { font: inherit; color: inherit; }
 .popover { padding: 14px; width: 280px; display: flex; flex-direction: column; gap: 10px; }
 .popover .t { font-size: 13px; font-weight: 600; }
 .popover .d { font-size: 12px; color: var(--ink-2); line-height: 1.5; text-wrap: pretty; }
-.popover .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.popover .actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 2px; }
 .popover .actions .btn { height: 32px; font-size: 12px; }
+.popover .actions .link-btn { white-space: nowrap; }
 .popover .pop-sep { height: 1px; background: var(--line); margin: 4px -14px; }
+.pop-device { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--chrome-2); min-width: 0; }
+.pop-device .dev-ico { background: var(--chrome); }
+.pop-path { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tooltip {
   position: fixed; pointer-events: none; background: var(--ink); color: var(--canvas); font-size: 11px; font-weight: 600;
   padding: 6px 10px; border-radius: 6px; white-space: nowrap; animation: pop 140ms ease-out;

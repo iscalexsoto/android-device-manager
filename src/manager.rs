@@ -304,6 +304,10 @@ impl Core {
         v
     }
 
+    pub fn recording_count(&self) -> usize {
+        self.recordings.lock().unwrap().len()
+    }
+
     // -------------------------------------------------------------------
     // Eventos hacia la interfaz
     // -------------------------------------------------------------------
@@ -1037,10 +1041,17 @@ impl Core {
     // -------------------------------------------------------------------
 
     pub fn start_recording(self: &Shared, serial: &str, options: RecordOptions) -> Result<String, String> {
+        if serial.is_empty() {
+            return Err("Selecciona un dispositivo para grabar".into());
+        }
+        let online = self.devices.lock().unwrap().iter().any(|d| d.serial == serial && d.state == "device");
+        if !online {
+            return Err("El dispositivo no está en línea".into());
+        }
         if self.recordings.lock().unwrap().contains_key(serial) {
             return Err("Ya se está grabando este dispositivo".into());
         }
-        let dir = self.settings().capture_dir();
+        let dir = self.settings().video_dir();
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join(format!(
             "{}.{}",
@@ -1062,11 +1073,28 @@ impl Core {
             RecordingHandle { info, child, stopping: false, lines },
         );
         self.emit_state();
+        self.focus_screen_of(serial);
 
         let core = self.clone();
         let serial = serial.to_string();
         thread::spawn(move || core.watch_recording(&serial));
         Ok(path.display().to_string())
+    }
+
+    /// Trae al frente la ventana de scrcpy del dispositivo, sea de esta app o externa.
+    /// Una ventana sin --serial solo puede ser de este dispositivo si es el único conectado.
+    fn focus_screen_of(&self, serial: &str) {
+        let own = self.sessions.lock().unwrap().values().find(|h| h.info.serial == serial).map(|h| h.info.pid);
+        let pid = own.or_else(|| {
+            let single = self.devices.lock().unwrap().len() == 1;
+            instances::scrcpy_windows()
+                .into_iter()
+                .find(|w| w.serial == serial || (single && w.serial.is_empty()))
+                .map(|w| w.pid)
+        });
+        if let Some(pid) = pid {
+            scrcpy::focus_window(pid);
+        }
     }
 
     fn watch_recording(&self, serial: &str) {

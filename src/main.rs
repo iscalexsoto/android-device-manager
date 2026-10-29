@@ -8,10 +8,13 @@ mod process;
 mod scrcpy;
 mod settings;
 mod tools;
+mod update;
 
 use crate::manager::{Core, LogEntry, Shared, Snapshot};
 use crate::instances::InstancesReport;
 use crate::settings::{LogcatOptions, RecordOptions, ScrcpyOptions, Settings};
+use crate::update::{UpdateState, Updater};
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, RunEvent, State};
 use tauri_plugin_dialog::DialogExt;
@@ -308,12 +311,78 @@ fn open_path(path: String) -> R<()> {
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Carpetas en uso para capturas y videos (con los valores por defecto ya resueltos).
 #[tauri::command]
-fn capture_dir(core: State<Shared>) -> String {
-    core.settings().capture_dir().display().to_string()
+fn record_dirs(core: State<Shared>) -> serde_json::Value {
+    let s = core.settings();
+    serde_json::json!({
+        "captures": s.capture_dir().display().to_string(),
+        "videos": s.video_dir().display().to_string(),
+    })
+}
+
+#[tauri::command]
+fn get_update(updater: State<Arc<Updater>>) -> UpdateState {
+    updater.state()
+}
+
+#[tauri::command]
+async fn check_update(core: State<'_, Shared>, updater: State<'_, Arc<Updater>>) -> R<UpdateState> {
+    let (c, u) = (core.inner().clone(), updater.inner().clone());
+    blocking(move || Ok(check_and_remember(&c, &u))).await
+}
+
+#[tauri::command]
+async fn download_update(updater: State<'_, Arc<Updater>>) -> R<UpdateState> {
+    let u = updater.inner().clone();
+    blocking(move || u.download()).await
+}
+
+/// Abre la versión nueva o el instalador y cierra esta.
+#[tauri::command]
+fn apply_update(app: AppHandle, core: State<Shared>, updater: State<Arc<Updater>>) -> R<()> {
+    // El instalador cierra la app a la fuerza y un MP4 cortado queda sin índice.
+    if core.recording_count() > 0 {
+        return Err("Detén las grabaciones en curso antes de actualizar".into());
+    }
+    updater.apply()?;
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+fn open_release_notes(url: String) -> R<()> {
+    if !url.starts_with(update::RELEASES_URL) {
+        return Err("Enlace no válido".into());
+    }
+    std::process::Command::new("explorer.exe").arg(&url).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Consulta GitHub y, si respondió, guarda la fecha para la comprobación automática.
+fn check_and_remember(core: &Shared, updater: &Updater) -> UpdateState {
+    let st = updater.check();
+    if st.phase != "error" {
+        let _ = core.update_settings(|s| s.last_update_check = update::now());
+    }
+    st
+}
+
+/// Comprobación automática: poco después de abrir y luego cada hora mira si ya toca.
+fn spawn_update_checker(core: Shared, updater: Arc<Updater>) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(8));
+        loop {
+            let s = core.settings();
+            if s.check_updates && update::now().saturating_sub(s.last_update_check) >= update::CHECK_INTERVAL {
+                check_and_remember(&core, &updater);
+            }
+            std::thread::sleep(Duration::from_secs(60 * 60));
+        }
+    });
 }
 
 fn main() {
+    update::on_start();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -321,6 +390,10 @@ fn main() {
             let core = Core::new(app.handle().clone(), dir.join("settings.json"));
             app.manage(core.clone());
             core.spawn_poller();
+
+            let updater = Arc::new(Updater::new(app.handle().clone()));
+            app.manage(updater.clone());
+            spawn_update_checker(core, updater);
 
             // La interfaz muestra la ventana al terminar de pintar; esto es solo un respaldo.
             if let Some(w) = app.get_webview_window("main") {
@@ -366,7 +439,12 @@ fn main() {
             pick_path,
             detect_paths,
             open_path,
-            capture_dir,
+            record_dirs,
+            get_update,
+            check_update,
+            download_update,
+            apply_update,
+            open_release_notes,
         ])
         .build(tauri::generate_context!())
         .expect("no se pudo iniciar la aplicación");

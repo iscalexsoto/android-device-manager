@@ -95,10 +95,16 @@ pub struct Settings {
     pub server_port: u16,
     pub auto_start_server: bool,
     pub stop_isolated_on_exit: bool,
-    /// Vacío = Imágenes\Android Device Manager.
+    /// Capturas de pantalla. Vacío = Imágenes\Android Device Manager.
     pub capture_dir: String,
+    /// Grabaciones de video. Vacío = Videos\Android Device Manager.
+    pub video_dir: String,
     /// system | light | dark
     pub theme: String,
+    /// Buscar versiones nuevas en GitHub al iniciar (como mucho una vez al día).
+    pub check_updates: bool,
+    /// Segundos desde la época de la última comprobación correcta.
+    pub last_update_check: u64,
     pub scrcpy: ScrcpyOptions,
     pub record: RecordOptions,
     pub logcat: LogcatOptions,
@@ -113,7 +119,10 @@ impl Default for Settings {
             auto_start_server: true,
             stop_isolated_on_exit: true,
             capture_dir: String::new(),
+            video_dir: String::new(),
             theme: "system".into(),
+            check_updates: true,
+            last_update_check: 0,
             scrcpy: ScrcpyOptions::default(),
             record: RecordOptions::default(),
             logcat: LogcatOptions::default(),
@@ -142,12 +151,21 @@ impl Settings {
     }
 
     pub fn capture_dir(&self) -> PathBuf {
-        if !self.capture_dir.trim().is_empty() {
-            return PathBuf::from(self.capture_dir.trim());
-        }
-        let base = std::env::var_os("USERPROFILE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-        base.join("Pictures").join("Android Device Manager")
+        dir_or_default(&self.capture_dir, "Pictures")
     }
+
+    pub fn video_dir(&self) -> PathBuf {
+        dir_or_default(&self.video_dir, "Videos")
+    }
+}
+
+/// Carpeta elegida o, si está vacía, `%USERPROFILE%\<library>\Android Device Manager`.
+fn dir_or_default(custom: &str, library: &str) -> PathBuf {
+    if !custom.trim().is_empty() {
+        return PathBuf::from(custom.trim());
+    }
+    let base = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join(library).join("Android Device Manager")
 }
