@@ -308,9 +308,14 @@ fn open_path(path: String) -> R<()> {
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Carpetas en uso para capturas y videos (con los valores por defecto ya resueltos).
 #[tauri::command]
-fn capture_dir(core: State<Shared>) -> String {
-    core.settings().capture_dir().display().to_string()
+fn record_dirs(core: State<Shared>) -> serde_json::Value {
+    let s = core.settings();
+    serde_json::json!({
+        "captures": s.capture_dir().display().to_string(),
+        "videos": s.video_dir().display().to_string(),
+    })
 }
 
 fn main() {
@@ -366,7 +371,7 @@ fn main() {
             pick_path,
             detect_paths,
             open_path,
-            capture_dir,
+            record_dirs,
         ])
         .build(tauri::generate_context!())
         .expect("no se pudo iniciar la aplicación");

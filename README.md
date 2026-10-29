@@ -94,10 +94,11 @@ cargo test
 | **Dispositivo** | Estado, Android/SDK, pantalla, batería, IP; opciones de scrcpy; consola `adb shell` |
 | **Barra superior** | Ver pantalla, captura (PNG), grabar video, instalar APK, depuración por Wi-Fi, reiniciar (normal/recovery/bootloader), conectar y emparejar por IP |
 | **Logcat** | Captura en vivo por dispositivo: app, filterspec (`MiTag:D *:S`), búfer e historial al iniciar; nivel mínimo y búsqueda al momento; exportar lo visible a `.txt` |
-| **Pantallas** | Sesiones de scrcpy abiertas (propias y externas) y grabaciones en curso: traer al frente, cerrar, detener |
+| **Pantallas** | Sesiones de scrcpy abiertas (propias y externas): traer al frente, cerrar |
+| **Grabación** | Dispositivo a grabar, grabaciones en curso, carpetas de capturas y de videos (por separado), resolución, bitrate, formato y audio |
 | **Servidor ADB** | Estado, iniciar/reiniciar/detener, modo compartido o aislado, diagnóstico de conflictos, procesos `adb.exe` con puerto y versión, binarios adb del equipo |
 | **Registro** | Cada comando de adb/scrcpy ejecutado, con código de salida, duración y salida |
-| **Ajustes** | Rutas de adb, scrcpy y capturas; arranque automático del servidor; tema |
+| **Ajustes** | Rutas de adb y scrcpy; arranque automático del servidor; tema |
 
 La interfaz sigue el sistema de diseño Retail One: tipografía Figtree / JetBrains Mono,
 barra superior de 36 + 48 px y rail derecho.
@@ -154,8 +155,14 @@ En Android 6 o anterior (sin `cmd package`) se usa `adb install` clásico, sin p
 <br>
 
 «Grabar» lanza scrcpy en segundo plano (`--no-window --no-playback --no-control --record`),
-con la resolución, el bitrate, el formato (MP4 o MKV) y el audio que se elijan en el popover.
+con la resolución, el bitrate, el formato (MP4 o MKV) y el audio que se elijan en el popover
+o en la sección **Grabación**. Solo se puede grabar el dispositivo seleccionado y en línea; el
+popover muestra su nombre antes de empezar. Si ese dispositivo tiene una ventana de scrcpy
+abierta (de esta app o externa), se trae al frente al iniciar la grabación.
 El audio usa AAC, que se reproduce en cualquier visor, y requiere Android 11 o superior.
+
+Las capturas (PNG) se guardan en `Imágenes\Android Device Manager` y los videos en
+`Videos\Android Device Manager`; ambas carpetas se cambian en **Grabación**.
 
 Para detener, la app envía Ctrl+C a la consola oculta de scrcpy (`AttachConsole` +
 `GenerateConsoleCtrlEvent`), de modo que scrcpy escriba el índice del MP4 antes de salir;

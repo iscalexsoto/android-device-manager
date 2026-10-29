@@ -70,6 +70,7 @@ const S = {
   lcQuery: '',         // búsqueda de texto en logcat
   lcMin: null,         // nivel mínimo mostrado
   lcFollow: true,      // seguir al final mientras llegan líneas
+  dirs: { captures: '', videos: '' }, // carpetas en uso (resueltas por el backend)
 };
 
 const INSTALL_ACTIVE = ['uninstall', 'copy', 'install'];
@@ -176,8 +177,8 @@ function renderChrome() {
     `<button class="icon-btn ${S.view === view ? 'selected' : ''}" data-act="nav" data-view="${view}" data-tip="${tip}" data-tip-side="left">${icon(ic, 20)}${extra}</button>`;
   patch($('#rail'), `
     ${r('device', 'phone', 'Dispositivo')}
-    ${r('mirror', 'screens', 'Pantallas y grabaciones',
-      recording ? '<span class="badge-dot pulse" style="background:var(--danger)"></span>' : sessions ? `<span class="badge">${sessions}</span>` : '')}
+    ${r('mirror', 'screens', 'Pantallas', sessions ? `<span class="badge">${sessions}</span>` : '')}
+    ${r('record', 'record', 'Grabación', recording ? '<span class="badge-dot pulse" style="background:var(--danger)"></span>' : '')}
     ${r('logcat', 'logcat', 'Logcat',
       (S.snap?.logcats?.length || 0) ? '<span class="badge-dot pulse" style="background:var(--green)"></span>' : '')}
     <div class="rail-div"></div>
@@ -224,7 +225,7 @@ function renderStage() {
     stage.innerHTML = '';
     stage.scrollTop = 0;
   }
-  ({ device: viewDevice, mirror: viewMirror, logcat: viewLogcat, adb: viewAdb, log: viewLog, settings: viewSettings })[S.view](stage);
+  ({ device: viewDevice, mirror: viewMirror, record: viewRecord, logcat: viewLogcat, adb: viewAdb, log: viewLog, settings: viewSettings })[S.view](stage);
 }
 
 /* ---- Dispositivo ---- */
@@ -385,21 +386,9 @@ function viewMirror(stage) {
       <button class="btn btn-danger sm" data-act="ext-close" data-pid="${x.pid}">Cerrar</button>
     </div>`;
   }).join('');
-  const recs = (s.recordings || []).map((x) => {
-    const d = devices().find((dv) => dv.serial === x.serial);
-    const ext = x.path.split('.').pop().toUpperCase();
-    return `<div class="list-row">
-      <span class="dot danger pulse"></span>
-      <div class="main"><div class="t">${esc(d ? deviceName(d) : x.serial)}</div>
-        <div class="s mono"><span data-since="${x.started}">${fmtDur(Date.now() - x.started)}</span> · ${ext} · ${x.audio ? 'con audio' : 'sin audio'} · PID ${x.pid}</div>
-        <div class="s mono">${esc(x.path)}</div></div>
-      <button class="btn btn-danger sm" data-act="record-stop" data-serial="${esc(x.serial)}">${icon('stop', 16)}Detener</button>
-    </div>`;
-  }).join('');
   patch(stage, `<div class="view">
-    <div class="page-head"><div class="grow col" style="gap:4px"><div class="page-title">Pantallas y grabaciones</div>
-      <div class="page-sub">Cada pantalla es una ventana de scrcpy en el escritorio. Se controla con mouse y teclado; al cerrarla termina la sesión. Las grabaciones corren en segundo plano, sin ventana.</div></div></div>
-    ${recs ? `<div class="card"><div class="card-head"><div class="card-title grow">Grabaciones en curso</div></div>${recs}</div>` : ''}
+    <div class="page-head"><div class="grow col" style="gap:4px"><div class="page-title">Pantallas</div>
+      <div class="page-sub">Cada pantalla es una ventana de scrcpy en el escritorio. Se controla con mouse y teclado; al cerrarla termina la sesión. Las grabaciones están en la sección Grabación.</div></div></div>
     ${s.scrcpyPath ? '' : `<div class="card banner"><span class="dot danger"></span><div class="col grow" style="gap:6px"><div class="card-title">No se encontró scrcpy</div>
       <div class="card-sub" style="line-height:1.6">Descárgalo desde su página oficial en GitHub, o instálalo por tu cuenta (<span class="code">winget install Genymobile.scrcpy</span>) y pulsa Volver a detectar.</div>
       <div class="row" style="margin-top:4px">${toolButton('scrcpy', 'sm')}<button class="btn btn-secondary sm" data-act="detect">${icon('search', 16)}Volver a detectar</button><button class="btn sm" data-act="pick" data-kind="scrcpy">${icon('folder', 16)}Elegir scrcpy.exe</button></div></div></div>`}
@@ -409,6 +398,81 @@ function viewMirror(stage) {
       <div class="section-label">Cómo evita conflictos</div>
       <div class="card-sub" style="line-height:1.6">scrcpy trae su propio adb. Si se usara, reiniciaría el servidor de Android Studio cuando las versiones no coinciden. Esta app lo lanza apuntando al adb configurado:</div>
       <div class="mono xs muted selectable" style="line-height:1.8">ADB=${esc(s.adbPath || '—')}<br>ANDROID_ADB_SERVER_PORT=${s.server.port}<br>${esc(s.scrcpyPath || 'scrcpy.exe')}</div>
+    </div>
+  </div>`);
+}
+
+/* ---- Grabación ---- */
+const REC_SIZES = [[0, 'Original'], [1920, '1920 px'], [1280, '1280 px'], [1024, '1024 px']];
+const REC_RATES = [[4, '4 Mbps'], [8, '8 Mbps'], [16, '16 Mbps'], [24, '24 Mbps']];
+const recSelect = (key, opts, cur) =>
+  `<select class="select" data-rec="${key}">${opts.map(([v, l]) => `<option value="${v}" ${Number(cur) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+const recFormatSeg = (cur) =>
+  `<div class="seg">${[['mp4', 'MP4'], ['mkv', 'MKV']].map(([v, l]) => `<button type="button" class="${cur === v ? 'on' : ''}" data-act="rec-format" data-format="${v}">${l}</button>`).join('')}</div>`;
+const recAudioToggle = (on) => `<span class="toggle"><input type="checkbox" data-rec="audio" ${on ? 'checked' : ''}><span></span></span>`;
+
+function viewRecord(stage) {
+  const s = S.snap;
+  const o = s.settings.record;
+  const d = selectedDevice();
+  const on = isOnline(d);
+  const rec = d && recordingOf(d.serial);
+
+  let target;
+  if (!d) {
+    target = `<div class="list-row"><span class="dot"></span><div class="main"><div class="t">Sin dispositivo seleccionado</div>
+      <div class="s">Elige un dispositivo en la lista de la izquierda para poder grabar.</div></div>
+      <button class="btn btn-primary sm" disabled>${icon('record', 16)}Grabar</button></div>`;
+  } else {
+    const [dot, label] = stateInfo(d.state);
+    const sub = [d.serial, on ? (hasScreen(d) ? 'Pantalla abierta: se traerá al frente al grabar' : 'En línea') : label].join(' · ');
+    target = `<div class="list-row"><span class="dot ${rec ? 'danger pulse' : dot}"></span>
+      <div class="main"><div class="t">${esc(deviceName(d))}</div><div class="s mono">${esc(sub)}</div></div>
+      ${rec
+        ? `<span class="small muted mono" data-since="${rec.started}">${fmtDur(Date.now() - rec.started)}</span><button class="btn btn-danger sm" data-act="record-stop" data-serial="${esc(d.serial)}">${icon('stop', 16)}Detener</button>`
+        : `<button class="btn btn-primary sm" data-act="record-pop" ${on ? '' : 'disabled'}>${icon('record', 16)}Grabar</button>`}
+    </div>`;
+  }
+
+  const recs = (s.recordings || []).map((x) => {
+    const dv = devices().find((v) => v.serial === x.serial);
+    const ext = x.path.split('.').pop().toUpperCase();
+    return `<div class="list-row">
+      <span class="dot danger pulse"></span>
+      <div class="main"><div class="t">${esc(dv ? deviceName(dv) : x.serial)}</div>
+        <div class="s mono"><span data-since="${x.started}">${fmtDur(Date.now() - x.started)}</span> · ${ext} · ${x.audio ? 'con audio' : 'sin audio'} · PID ${x.pid}</div>
+        <div class="s mono">${esc(x.path)}</div></div>
+      <button class="btn btn-danger sm" data-act="record-stop" data-serial="${esc(x.serial)}">${icon('stop', 16)}Detener</button>
+    </div>`;
+  }).join('');
+
+  const dirRow = (key, dir, label, sub, placeholder) => `<div class="settings-row">
+    <div class="lab"><b>${label}</b><span>${sub}</span></div>
+    <div style="min-width:0"><div class="path-field">
+      <input class="input mono" data-set="${key}" value="${esc(s.settings[key])}" placeholder="${esc(placeholder)}" spellcheck="false">
+      <button class="btn btn-secondary sm" data-act="pick" data-kind="folder" data-key="${key}">Examinar</button>
+      <button class="icon-btn sm" data-act="open-dir" data-dir="${dir}" data-tip="Abrir carpeta">${icon('folder', 16)}</button>
+      <button class="icon-btn sm" data-act="reset-dir" data-key="${key}" data-tip="Carpeta predeterminada" ${s.settings[key] ? '' : 'disabled'}>${icon('restart', 16)}</button>
+    </div><div class="hint mono" title="${esc(S.dirs[dir])}">En uso: ${esc(S.dirs[dir] || '—')}</div></div>
+  </div>`;
+
+  patch(stage, `<div class="view">
+    <div class="page-head"><div class="grow col" style="gap:4px"><div class="page-title">Grabación</div>
+      <div class="page-sub">Dónde se guardan las capturas y los videos, y con qué calidad se graba. Las grabaciones corren en segundo plano con scrcpy, sin abrir ventana.</div></div></div>
+    <div class="card"><div class="card-head"><div class="card-title grow">Dispositivo</div></div>${target}</div>
+    ${recs ? `<div class="card"><div class="card-head"><div class="card-title grow">Grabaciones en curso</div></div>${recs}</div>` : ''}
+    <div class="card">
+      <div class="card-head"><div class="grow col" style="gap:2px"><div class="card-title">Carpetas</div><div class="card-sub">Vacío = carpeta predeterminada</div></div></div>
+      ${dirRow('captureDir', 'captures', 'Capturas', 'Imágenes PNG', 'Imágenes\\Android Device Manager')}
+      ${dirRow('videoDir', 'videos', 'Videos', 'Grabaciones MP4 y MKV', 'Videos\\Android Device Manager')}
+    </div>
+    <div class="card">
+      <div class="card-head"><div class="grow col" style="gap:2px"><div class="card-title">Opciones de video</div><div class="card-sub">Se aplican al empezar cada grabación</div></div></div>
+      <div class="settings-row"><div class="lab"><b>Resolución</b><span>Lado mayor del video</span></div><div style="max-width:200px">${recSelect('maxSize', REC_SIZES, o.maxSize)}</div></div>
+      <div class="settings-row"><div class="lab"><b>Bitrate</b><span>Más alto = mejor calidad y archivos más grandes</span></div><div style="max-width:200px">${recSelect('bitRate', REC_RATES, o.bitRate)}</div></div>
+      <div class="settings-row"><div class="lab"><b>Formato</b><span>MKV resiste cortes inesperados</span></div><div>${recFormatSeg(o.format)}</div></div>
+      <div class="settings-row"><div class="lab"><b>Audio del teléfono</b><span>Android 11 o superior</span></div>
+        <label class="row" style="cursor:pointer">${recAudioToggle(o.audio)}<span class="small muted">Grabar el audio interno en AAC</span></label></div>
     </div>
   </div>`);
 }
@@ -713,8 +777,8 @@ function viewSettings(stage) {
     <div style="min-width:0"><div class="path-field">
       <input class="input mono" data-set="${key}" value="${esc(s[key])}" placeholder="${esc(placeholder)}" spellcheck="false">
       <button class="btn btn-secondary sm" data-act="pick" data-kind="${kind}">Examinar</button>
-      ${kind === 'folder' ? `<button class="icon-btn sm" data-act="open-captures" data-tip="Abrir carpeta">${icon('folder', 16)}</button>` : `<button class="icon-btn sm" data-act="clear-path" data-key="${key}" data-tip="Detección automática">${icon('search', 16)}</button>`}
-    </div><div class="hint mono" title="${esc(resolved || '')}">${resolved ? `En uso: ${esc(resolved)}` : `No encontrado${kind === 'folder' ? '' : ` · ${toolButton(kind, 'link')}`}`}</div></div>
+      <button class="icon-btn sm" data-act="clear-path" data-key="${key}" data-tip="Detección automática">${icon('search', 16)}</button>
+    </div><div class="hint mono" title="${esc(resolved || '')}">${resolved ? `En uso: ${esc(resolved)}` : `No encontrado · ${toolButton(kind, 'link')}`}</div></div>
   </div>`;
   patch(stage, `<div class="view">
     <div class="page-head"><div class="grow col" style="gap:4px"><div class="page-title">Ajustes</div><div class="page-sub">Los cambios se guardan al momento.</div></div></div>
@@ -722,7 +786,8 @@ function viewSettings(stage) {
       <div class="card-head"><div class="card-title">Herramientas</div></div>
       ${pathRow('adbPath', 'adb.exe', 'Vacío = SDK de Android', 'Automático (SDK de Android)', S.snap.adbPath, 'adb')}
       ${pathRow('scrcpyPath', 'scrcpy.exe', 'Vacío = detección automática', 'Automático (PATH, WinGet, Scoop)', S.snap.scrcpyPath, 'scrcpy')}
-      ${pathRow('captureDir', 'Capturas', 'Imágenes y grabaciones', 'Imágenes\\Android Device Manager', S.captureDir, 'folder')}
+      <div class="settings-row"><div class="lab"><b>Capturas y videos</b><span>Carpetas y calidad</span></div>
+        <div><button class="btn btn-secondary sm" data-act="nav" data-view="record">${icon('record', 16)}Abrir Grabación</button></div></div>
     </div>
     <div class="card">
       <div class="card-head"><div class="card-title">Servidor</div></div>
@@ -818,43 +883,45 @@ function confirmPop(anchor, { title, text, ok = 'Confirmar', danger = true }) {
 function recordPop(anchor, d) {
   closeLayer();
   const o = S.snap.settings.record;
-  const opt = (v, l, cur) => `<option value="${v}" ${Number(cur) === v ? 'selected' : ''}>${l}</option>`;
+  const [tic] = TRANSPORT[d.transport] || ['phone'];
   const el = document.createElement('div');
   el.className = 'popover';
-  el.style.width = '300px';
+  el.style.width = '320px';
+  // Cambios de opciones y formato: manejadores globales (data-rec, rec-format).
   el.innerHTML = `
     <div class="t">Grabar pantalla</div>
-    <div class="d">Graba ${esc(deviceName(d))} en segundo plano, sin abrir ventana. El video se guarda en la carpeta de capturas.</div>
+    <div class="pop-device">
+      <div class="dev-ico">${icon(tic, 16)}</div>
+      <div class="dev-main"><div class="dev-name">${esc(deviceName(d))}</div><div class="dev-sub mono">${esc(d.serial)}</div></div>
+    </div>
+    <div class="d">Se graba en segundo plano, sin abrir ventana.${hasScreen(d) ? ' La pantalla de scrcpy abierta se traerá al frente.' : ''}</div>
     <div class="row" style="gap:8px">
-      <div class="field grow"><label>Resolución</label><select class="select" data-rec="maxSize">${[[0, 'Original'], [1920, '1920 px'], [1280, '1280 px'], [1024, '1024 px']].map(([v, l]) => opt(v, l, o.maxSize)).join('')}</select></div>
-      <div class="field grow"><label>Bitrate</label><select class="select" data-rec="bitRate">${[[4, '4 Mbps'], [8, '8 Mbps'], [16, '16 Mbps'], [24, '24 Mbps']].map(([v, l]) => opt(v, l, o.bitRate)).join('')}</select></div>
+      <div class="field grow"><label>Resolución</label>${recSelect('maxSize', REC_SIZES, o.maxSize)}</div>
+      <div class="field grow"><label>Bitrate</label>${recSelect('bitRate', REC_RATES, o.bitRate)}</div>
     </div>
     <div class="row" style="justify-content:space-between">
       <span class="small muted" style="font-weight:600">Formato</span>
-      <div class="seg">${[['mp4', 'MP4'], ['mkv', 'MKV']].map(([v, l]) => `<button type="button" class="${o.format === v ? 'on' : ''}" data-rec-format="${v}">${l}</button>`).join('')}</div>
+      ${recFormatSeg(o.format)}
     </div>
     <label class="row" style="cursor:pointer;justify-content:space-between">
       <span class="col" style="gap:0"><span class="small" style="font-weight:600">Audio del teléfono</span><span class="xs faint">Android 11 o superior</span></span>
-      <span class="toggle"><input type="checkbox" data-rec="audio" ${o.audio ? 'checked' : ''}><span></span></span>
+      ${recAudioToggle(o.audio)}
     </label>
-    <div class="actions"><button class="btn btn-secondary" data-r="0">Cancelar</button><button class="btn btn-primary" data-r="1">${icon('record', 16)}Grabar</button></div>`;
+    <div class="col" style="gap:2px">
+      <span class="xs faint">Se guarda en</span>
+      <span class="xs mono muted pop-path" title="${esc(S.dirs.videos)}">${esc(S.dirs.videos || '—')}</span>
+    </div>
+    <div class="actions"><button class="link-btn small" data-act="nav" data-view="record" data-r="0">Más opciones</button><div class="grow"></div><button class="btn btn-secondary" data-r="0">Cancelar</button><button class="btn btn-primary" data-r="1">${icon('record', 16)}Grabar</button></div>`;
   const current = () => S.snap.settings.record;
-  el.addEventListener('change', (e) => {
-    const k = e.target.dataset.rec;
-    if (!k) return;
-    const v = e.target.type === 'checkbox' ? e.target.checked : Number(e.target.value);
-    saveSettings((s) => { s.record[k] = v; });
-  });
   el.addEventListener('click', async (e) => {
-    const f = e.target.closest('[data-rec-format]');
-    if (f) {
-      el.querySelectorAll('[data-rec-format]').forEach((b) => b.classList.toggle('on', b === f));
-      saveSettings((s) => { s.record.format = f.dataset.recFormat; });
-      return;
-    }
     const b = e.target.closest('[data-r]');
     if (!b) return;
     closeLayer();
+    // El dispositivo pudo desconectarse mientras el popover estaba abierto.
+    if (b.dataset.r === '1' && !isOnline(devices().find((x) => x.serial === d.serial))) {
+      toast('warning', `${deviceName(d)} ya no está en línea`);
+      return;
+    }
     if (b.dataset.r !== '1') return;
     run('record', async () => {
       await invoke('start_recording', { serial: d.serial, options: current() });
@@ -1133,8 +1200,8 @@ async function refreshInstances() {
   } catch (err) { console.error(err); }
 }
 
-async function refreshCaptureDir() {
-  try { S.captureDir = await invoke('capture_dir'); } catch { /* sin importancia */ }
+async function refreshDirs() {
+  try { S.dirs = await invoke('record_dirs'); } catch { /* sin importancia */ }
 }
 
 const actions = {
@@ -1146,12 +1213,13 @@ const actions = {
     S.view = el.dataset.view;
     if (S.view === 'adb' || S.view === 'mirror') refreshInstances();
     if (S.view === 'log') invoke('get_logs').then((l) => { S.logs = l; if (S.view === 'log') renderStage(); });
-    if (S.view === 'settings') refreshCaptureDir().then(render);
+    if (S.view === 'record') refreshDirs().then(render);
     render();
   },
   select: (el) => {
     S.selected = el.dataset.serial;
-    if (S.view !== 'device' && S.view !== 'logcat') S.view = 'device';
+    // Logcat y Grabación trabajan sobre el dispositivo elegido sin salir de la sección.
+    if (!['device', 'logcat', 'record'].includes(S.view)) S.view = 'device';
     render();
   },
 
@@ -1187,7 +1255,16 @@ const actions = {
       toast('success', `Captura guardada · ${path.split('\\').pop()}`, { label: 'Mostrar', run: () => invoke('open_path', { path }) });
     });
   },
-  'record-pop': (el) => { const d = selectedDevice(); if (isOnline(d)) recordPop(el, d); },
+  'record-pop': (el) => {
+    const d = selectedDevice();
+    if (!d) return toast('warning', 'Selecciona un dispositivo para grabar');
+    if (!isOnline(d)) return toast('warning', `${deviceName(d)} no está en línea`);
+    recordPop(el, d);
+  },
+  'rec-format': (el) => {
+    el.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === el));
+    saveSettings((s) => { s.record.format = el.dataset.format; });
+  },
   'record-stop': async (el) => {
     const serial = el.dataset.serial || selectedDevice()?.serial;
     const rec = recordingOf(serial);
@@ -1394,9 +1471,9 @@ const actions = {
     const kind = el.dataset.kind;
     const path = await invoke('pick_path', { kind }).catch((e) => { toast('danger', e); return null; });
     if (!path) return;
-    const key = { adb: 'adbPath', scrcpy: 'scrcpyPath', folder: 'captureDir' }[kind];
+    const key = el.dataset.key || { adb: 'adbPath', scrcpy: 'scrcpyPath' }[kind];
     await saveSettings((s) => { s[key] = path; });
-    if (kind === 'folder') await refreshCaptureDir();
+    if (kind === 'folder') await refreshDirs();
     if (kind === 'adb') refreshInstances();
     render();
   },
@@ -1409,7 +1486,13 @@ const actions = {
     await saveSettings((s) => { s.scrcpyPath = ''; });
     toast(found.scrcpy ? 'success' : 'warning', found.scrcpy ? `scrcpy encontrado · ${found.scrcpy}` : 'No se encontró scrcpy');
   },
-  'open-captures': () => invoke('open_path', { path: S.captureDir || '' }).catch((e) => toast('danger', e)),
+  'open-dir': (el) => invoke('open_path', { path: S.dirs[el.dataset.dir] || '' }).catch((e) => toast('danger', e)),
+  'reset-dir': async (el) => {
+    await saveSettings((s) => { s[el.dataset.key] = ''; });
+    await refreshDirs();
+    render();
+    toast('info', 'Se usará la carpeta predeterminada');
+  },
   theme: (el) => saveSettings((s) => { s.theme = el.dataset.theme; }),
 };
 
@@ -1431,11 +1514,16 @@ document.addEventListener('change', (e) => {
     const key = t.dataset.lc;
     const val = t.value.trim();
     saveSettings((s) => { s.logcat[key] = val; });
+  } else if (t.dataset.rec) {
+    // Opciones de grabación: popover y sección Grabación.
+    const key = t.dataset.rec;
+    const val = t.type === 'checkbox' ? t.checked : Number(t.value);
+    saveSettings((s) => { s.record[key] = val; });
   } else if (t.dataset.set) {
     const key = t.dataset.set;
     const val = t.type === 'checkbox' ? t.checked : t.value.trim();
     saveSettings((s) => { s[key] = val; }).then(() => {
-      if (key === 'captureDir') refreshCaptureDir().then(render);
+      if (key === 'captureDir' || key === 'videoDir') refreshDirs().then(render);
       if (key === 'adbPath') refreshInstances();
     });
   }
@@ -1523,7 +1611,7 @@ async function init() {
 
   S.snap = await invoke('get_state');
   S.logs = await invoke('get_logs');
-  await refreshCaptureDir();
+  await refreshDirs();
   render();
   await appWindow.show();
   appWindow.setFocus();

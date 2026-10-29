@@ -351,9 +351,13 @@ input, select, textarea { font: inherit; color: inherit; }
 .popover { padding: 14px; width: 280px; display: flex; flex-direction: column; gap: 10px; }
 .popover .t { font-size: 13px; font-weight: 600; }
 .popover .d { font-size: 12px; color: var(--ink-2); line-height: 1.5; text-wrap: pretty; }
-.popover .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.popover .actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 2px; }
 .popover .actions .btn { height: 32px; font-size: 12px; }
+.popover .actions .link-btn { white-space: nowrap; }
 .popover .pop-sep { height: 1px; background: var(--line); margin: 4px -14px; }
+.pop-device { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--chrome-2); min-width: 0; }
+.pop-device .dev-ico { background: var(--chrome); }
+.pop-path { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tooltip {
   position: fixed; pointer-events: none; background: var(--ink); color: var(--canvas); font-size: 11px; font-weight: 600;
   padding: 6px 10px; border-radius: 6px; white-space: nowrap; animation: pop 140ms ease-out;

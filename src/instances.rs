@@ -174,21 +174,8 @@ pub fn scan(input: ScanInput) -> InstancesReport {
             studio_running = true;
         }
         let args: Vec<String> = p.cmd().iter().skip(1).map(|a| a.to_string_lossy().to_string()).collect();
-        // Las grabaciones sin ventana no son pantallas que se puedan traer al frente.
-        if name == "scrcpy.exe" && !args.iter().any(|a| a == "--no-window") {
-            let serial = args
-                .iter()
-                .enumerate()
-                .find_map(|(i, a)| {
-                    a.strip_prefix("--serial=")
-                        .map(str::to_string)
-                        .or_else(|| (a == "-s" || a == "--serial").then(|| args.get(i + 1).cloned()).flatten())
-                })
-                .unwrap_or_default();
-            scrcpy.push(ScrcpyProcess { pid: pid.as_u32(), serial, started: p.start_time() });
-            continue;
-        }
         if name == "scrcpy.exe" {
+            scrcpy.extend(scrcpy_window(pid.as_u32(), p, &args));
             continue;
         }
         if name != "adb.exe" {
@@ -408,6 +395,41 @@ fn detect_issues(r: &InstancesReport) -> Vec<Issue> {
     }
 
     out
+}
+
+/// Proceso scrcpy con ventana; las grabaciones sin ventana no se pueden traer al frente.
+fn scrcpy_window(pid: u32, p: &sysinfo::Process, args: &[String]) -> Option<ScrcpyProcess> {
+    if args.iter().any(|a| a == "--no-window") {
+        return None;
+    }
+    let serial = args
+        .iter()
+        .enumerate()
+        .find_map(|(i, a)| {
+            a.strip_prefix("--serial=")
+                .map(str::to_string)
+                .or_else(|| (a == "-s" || a == "--serial").then(|| args.get(i + 1).cloned()).flatten())
+        })
+        .unwrap_or_default();
+    Some(ScrcpyProcess { pid, serial, started: p.start_time() })
+}
+
+/// Solo las ventanas de scrcpy, sin el análisis completo de adb.
+pub fn scrcpy_windows() -> Vec<ScrcpyProcess> {
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+    );
+    sys.processes()
+        .iter()
+        .filter(|(_, p)| p.name().to_string_lossy().eq_ignore_ascii_case("scrcpy.exe"))
+        .filter_map(|(pid, p)| {
+            let args: Vec<String> = p.cmd().iter().skip(1).map(|a| a.to_string_lossy().to_string()).collect();
+            scrcpy_window(pid.as_u32(), p, &args)
+        })
+        .collect()
 }
 
 pub fn is_process_named(pid: u32, name: &str) -> bool {

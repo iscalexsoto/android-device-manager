@@ -95,8 +95,10 @@ pub struct Settings {
     pub server_port: u16,
     pub auto_start_server: bool,
     pub stop_isolated_on_exit: bool,
-    /// Vacío = Imágenes\Android Device Manager.
+    /// Capturas de pantalla. Vacío = Imágenes\Android Device Manager.
     pub capture_dir: String,
+    /// Grabaciones de video. Vacío = Videos\Android Device Manager.
+    pub video_dir: String,
     /// system | light | dark
     pub theme: String,
     pub scrcpy: ScrcpyOptions,
@@ -113,6 +115,7 @@ impl Default for Settings {
             auto_start_server: true,
             stop_isolated_on_exit: true,
             capture_dir: String::new(),
+            video_dir: String::new(),
             theme: "system".into(),
             scrcpy: ScrcpyOptions::default(),
             record: RecordOptions::default(),
@@ -142,12 +145,21 @@ impl Settings {
     }
 
     pub fn capture_dir(&self) -> PathBuf {
-        if !self.capture_dir.trim().is_empty() {
-            return PathBuf::from(self.capture_dir.trim());
-        }
-        let base = std::env::var_os("USERPROFILE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-        base.join("Pictures").join("Android Device Manager")
+        dir_or_default(&self.capture_dir, "Pictures")
     }
+
+    pub fn video_dir(&self) -> PathBuf {
+        dir_or_default(&self.video_dir, "Videos")
+    }
+}
+
+/// Carpeta elegida o, si está vacía, `%USERPROFILE%\<library>\Android Device Manager`.
+fn dir_or_default(custom: &str, library: &str) -> PathBuf {
+    if !custom.trim().is_empty() {
+        return PathBuf::from(custom.trim());
+    }
+    let base = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join(library).join("Android Device Manager")
 }
