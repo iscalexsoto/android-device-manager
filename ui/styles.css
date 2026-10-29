@@ -62,6 +62,15 @@ input, select, textarea { font: inherit; color: inherit; }
 .chip .mono { font-size: 11px; color: var(--ink-3); }
 .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--ink-3); flex: none; }
 .chip .dot { width: 7px; height: 7px; }
+.upd-chip { gap: 6px; cursor: pointer; color: var(--primary); border-color: color-mix(in srgb, var(--primary) 35%, var(--line)); background: color-mix(in srgb, var(--primary) 8%, var(--chrome)); transition: background 140ms ease-out; }
+.upd-chip:hover { background: color-mix(in srgb, var(--primary) 14%, var(--chrome)); }
+.upd-chip[hidden] { display: none; }
+.upd-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.upd-status { flex: 1; min-width: 0; line-height: 1.6; color: var(--ink-2); overflow-wrap: anywhere; }
+.upd-status .dot { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.upd-status b { color: var(--ink); }
+.upd-bar { padding: 0 18px 14px 214px; }
+.upd-bar .task-bar { margin: 0; }
 .dot.green { background: var(--green); }
 .dot.orange { background: var(--orange); }
 .dot.danger { background: var(--danger); }

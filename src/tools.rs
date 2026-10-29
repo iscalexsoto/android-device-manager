@@ -127,7 +127,7 @@ struct Asset {
     digest: Option<String>,
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     let tls = ureq::tls::TlsConfig::builder()
         .provider(ureq::tls::TlsProvider::NativeTls)
         .root_certs(ureq::tls::RootCerts::PlatformVerifier)
@@ -141,7 +141,7 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-fn net_err(e: ureq::Error) -> String {
+pub(crate) fn net_err(e: ureq::Error) -> String {
     match e {
         ureq::Error::StatusCode(403 | 429) => "GitHub limitó las consultas desde esta red. Intenta de nuevo en unos minutos.".into(),
         ureq::Error::StatusCode(code) => format!("El servidor respondió con el código {code}"),
@@ -222,15 +222,30 @@ fn install_into(root: &Path, tool: Tool, mut step: impl FnMut(Step)) -> Result<I
 }
 
 fn download(agent: &ureq::Agent, src: &Source, dest: &Path, step: &mut impl FnMut(Step)) -> Result<u64, String> {
-    let mut resp = agent.get(&src.url).call().map_err(net_err)?;
-    let total = resp.body().content_length().or(src.size);
+    download_to(agent, &src.url, src.size, src.sha256.as_deref(), dest, |received, total| {
+        step(Step::Download { received, total })
+    })
+}
+
+/// Descarga `url` en `dest` comprobando el tamaño y, si se conoce, el SHA-256
+/// (hex en minúsculas). Informa los bytes recibidos con `progress`.
+pub(crate) fn download_to(
+    agent: &ureq::Agent,
+    url: &str,
+    size: Option<u64>,
+    sha256: Option<&str>,
+    dest: &Path,
+    mut progress: impl FnMut(u64, Option<u64>),
+) -> Result<u64, String> {
+    let mut resp = agent.get(url).call().map_err(net_err)?;
+    let total = resp.body().content_length().or(size);
     let mut reader = resp.body_mut().as_reader();
     let mut out = BufWriter::new(File::create(dest).map_err(|e| e.to_string())?);
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     let mut received = 0u64;
     let mut last = Instant::now();
-    step(Step::Download { received, total });
+    progress(received, total);
     loop {
         let n = match reader.read(&mut buf) {
             Ok(0) => break,
@@ -243,20 +258,21 @@ fn download(agent: &ureq::Agent, src: &Source, dest: &Path, step: &mut impl FnMu
         received += n as u64;
         if last.elapsed() >= Duration::from_millis(150) {
             last = Instant::now();
-            step(Step::Download { received, total });
+            progress(received, total);
         }
     }
     out.flush().map_err(|e| e.to_string())?;
-    step(Step::Download { received, total });
+    drop(out);
+    progress(received, total);
 
     if let Some(t) = total
         && received != t
     {
         return Err(format!("Descarga incompleta: {received} de {t} bytes"));
     }
-    if let Some(expected) = &src.sha256 {
+    if let Some(expected) = sha256 {
         let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        if &actual != expected {
+        if actual != expected {
             return Err("La suma SHA-256 del archivo descargado no coincide con la publicada. Se descartó.".into());
         }
     }

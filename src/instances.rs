@@ -432,6 +432,13 @@ pub fn scrcpy_windows() -> Vec<ScrcpyProcess> {
         .collect()
 }
 
+pub fn is_running(pid: u32) -> bool {
+    let mut sys = System::new();
+    let spid = sysinfo::Pid::from_u32(pid);
+    sys.refresh_processes(ProcessesToUpdate::Some(&[spid]), true);
+    sys.process(spid).is_some()
+}
+
 pub fn is_process_named(pid: u32, name: &str) -> bool {
     let mut sys = System::new();
     let spid = sysinfo::Pid::from_u32(pid);

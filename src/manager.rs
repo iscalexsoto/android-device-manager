@@ -304,6 +304,10 @@ impl Core {
         v
     }
 
+    pub fn recording_count(&self) -> usize {
+        self.recordings.lock().unwrap().len()
+    }
+
     // -------------------------------------------------------------------
     // Eventos hacia la interfaz
     // -------------------------------------------------------------------

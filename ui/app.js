@@ -71,6 +71,9 @@ const S = {
   lcMin: null,         // nivel mínimo mostrado
   lcFollow: true,      // seguir al final mientras llegan líneas
   dirs: { captures: '', videos: '' }, // carpetas en uso (resueltas por el backend)
+  upd: null,           // estado del actualizador (evento `update`)
+  updManual: false,    // la comprobación en curso la pidió el usuario
+  updNotified: null,   // versión ya anunciada con un toast
 };
 
 const INSTALL_ACTIVE = ['uninstall', 'copy', 'install'];
@@ -138,6 +141,7 @@ function renderChrome() {
   if (srv?.starting) { cls = 'orange'; text = 'Iniciando'; }
   else if (srv?.running) { cls = 'green'; text = S.snap.settings.serverPort === 5037 ? 'Conectado' : 'Servidor aislado'; }
   patch(chip, `<span class="dot ${cls}" data-tauri-drag-region></span><span data-tauri-drag-region>${text}</span>${srv ? `<span class="mono" data-tauri-drag-region>:${srv.port}</span>` : ''}`);
+  renderUpdateChip();
 
   // Barra de herramientas: acciones sobre el dispositivo seleccionado.
   const d = selectedDevice();
@@ -768,6 +772,94 @@ function viewLog(stage) {
   </div>`);
 }
 
+/* ---- Actualizaciones ---- */
+const updPct = (u) => (u.total ? Math.min(100, Math.floor((u.received / u.total) * 100)) : 0);
+
+/** Aviso en la barra de título mientras hay una versión nueva pendiente. */
+function renderUpdateChip() {
+  const el = $('#update-chip');
+  const u = S.upd;
+  const v = u?.release?.version;
+  const text = !u ? ''
+    : u.phase === 'available' ? `Versión ${v} disponible`
+    : u.phase === 'downloading' ? `Descargando ${v} · ${updPct(u)} %`
+    : u.phase === 'ready' ? (u.mode === 'installed' ? `Instalar ${v}` : `Reiniciar para usar ${v}`)
+    : '';
+  el.hidden = !text;
+  patch(el, text ? `${u.phase === 'downloading' ? spinner(12) : icon('install', 13, 2)}<span>${esc(text)}</span>` : '');
+}
+
+function updateCard() {
+  const u = S.upd;
+  if (!u) return '';
+  const s = S.snap.settings;
+  const rel = u.release;
+  const modeLabel = { installed: 'Instalada', portable: 'Portable', dev: 'Compilación de desarrollo' }[u.mode];
+  const busy = S.busy.has('upd');
+  const checkBtn = `<button class="btn btn-secondary sm" data-act="update-check" ${busy || u.phase === 'checking' ? 'disabled' : ''}>${u.phase === 'checking' ? spinner(14) : icon('refresh', 16)}Buscar ahora</button>`;
+  const notes = rel ? `<button class="link-btn" data-act="update-notes">Ver notas</button>` : '';
+  let status, actions = checkBtn;
+  switch (u.phase) {
+    case 'checking':
+      status = 'Buscando versiones nuevas en GitHub…';
+      break;
+    case 'uptodate':
+      status = `<span class="dot green"></span>Tienes la versión más reciente`;
+      break;
+    case 'available':
+      status = `<span class="dot primary"></span>Versión <b>${esc(rel.version)}</b> disponible · ${mb(rel.size)} MB · ${notes}`;
+      actions = u.mode === 'dev'
+        ? `<span class="small muted">En desarrollo se actualiza con git pull</span>`
+        : `<button class="btn btn-primary sm" data-act="update-download">${icon('install', 16)}Descargar</button>`;
+      break;
+    case 'downloading':
+      status = `Descargando ${esc(rel.version)} · ${mb(u.received)} de ${mb(u.total)} MB`;
+      actions = `<span class="task-pct mono">${updPct(u)} %</span>`;
+      break;
+    case 'ready':
+      status = u.mode === 'installed'
+        ? `<span class="dot green"></span>Versión <b>${esc(rel.version)}</b> descargada. La app se cerrará, se instalará y volverá a abrirse.`
+        : `<span class="dot green"></span>Versión <b>${esc(rel.version)}</b> lista. Se usará al reiniciar la app.`;
+      actions = `<button class="btn btn-primary sm" data-act="update-apply">${icon('restart', 16)}${u.mode === 'installed' ? 'Instalar y reiniciar' : 'Reiniciar ahora'}</button>`;
+      break;
+    case 'error':
+      status = `<span class="dot danger"></span>${esc(u.message || 'No se pudo comprobar')}`;
+      if (u.file) {
+        status += `<br><span class="mono xs">La versión nueva quedó en ${esc(u.file)}</span>`;
+        actions = `<button class="btn btn-secondary sm" data-act="update-file">${icon('folder', 16)}Mostrar archivo</button>`;
+      }
+      break;
+    default:
+      status = 'Todavía no se ha buscado';
+  }
+  if (u.phase === 'available' && u.message) status += `<br><span class="small" style="color:var(--danger)">${esc(u.message)}</span>`;
+  if (rel && !rel.verified && ['available', 'downloading'].includes(u.phase)) {
+    status += '<br><span class="xs faint">La versión no publica SHA-256: la descarga no se podrá verificar.</span>';
+  }
+  const last = s.lastUpdateCheck ? `Última comprobación: ${new Date(s.lastUpdateCheck * 1000).toLocaleString('es')}` : 'Sin comprobaciones todavía';
+  return `<div class="card">
+    <div class="card-head"><div class="grow col" style="gap:2px"><div class="card-title">Actualizaciones</div><div class="card-sub">Versiones publicadas en GitHub</div></div></div>
+    <div class="settings-row"><div class="lab"><b>Versión ${esc(u.current)}</b><span>${modeLabel}</span></div>
+      <div class="upd-row"><div class="upd-status small">${status}</div><div class="row" style="gap:8px;flex:none">${actions}</div></div></div>
+    ${u.phase === 'downloading' ? `<div class="upd-bar"><div class="task-bar"><div style="width:${updPct(u)}%"></div></div></div>` : ''}
+    <div class="settings-row"><div class="lab"><b>Buscar al iniciar</b><span>Como mucho una vez al día</span></div>
+      <label class="row" style="cursor:pointer"><span class="toggle"><input type="checkbox" data-set="checkUpdates" ${s.checkUpdates ? 'checked' : ''}><span></span></span><span class="small muted">${esc(last)}</span></label></div>
+  </div>`;
+}
+
+function onUpdateEvent(u) {
+  const prev = S.upd?.phase;
+  S.upd = u;
+  renderUpdateChip();
+  patch($('#upd-card'), updateCard());
+  // Lo encontrado por la comprobación automática se anuncia una vez por versión.
+  const v = u.release?.version;
+  if (u.phase === 'available' && prev === 'checking' && !S.updManual && S.updNotified !== v) {
+    S.updNotified = v;
+    toast('info', `Versión ${v} disponible`, { label: 'Ver', run: () => actions['update-show']() });
+  }
+}
+
 /* ---- Ajustes ---- */
 function viewSettings(stage) {
   const s = S.snap.settings;
@@ -782,6 +874,7 @@ function viewSettings(stage) {
   </div>`;
   patch(stage, `<div class="view">
     <div class="page-head"><div class="grow col" style="gap:4px"><div class="page-title">Ajustes</div><div class="page-sub">Los cambios se guardan al momento.</div></div></div>
+    <div id="upd-card">${updateCard()}</div>
     <div class="card">
       <div class="card-head"><div class="card-title">Herramientas</div></div>
       ${pathRow('adbPath', 'adb.exe', 'Vacío = SDK de Android', 'Automático (SDK de Android)', S.snap.adbPath, 'adb')}
@@ -1494,6 +1587,34 @@ const actions = {
     toast('info', 'Se usará la carpeta predeterminada');
   },
   theme: (el) => saveSettings((s) => { s.theme = el.dataset.theme; }),
+
+  'update-show': () => {
+    S.view = 'settings';
+    render();
+    $('#upd-card')?.scrollIntoView({ block: 'nearest' });
+  },
+  'update-check': () => run('upd', async () => {
+    S.updManual = true;
+    try {
+      const u = await invoke('check_update');
+      if (u.phase === 'uptodate') toast('success', `Tienes la versión más reciente (${u.current})`);
+      else if (u.phase === 'available') toast('info', `Versión ${u.release.version} disponible`);
+      else if (u.phase === 'error') toast('danger', u.message);
+    } finally { S.updManual = false; }
+  }),
+  'update-download': () => run('upd', async () => {
+    const u = await invoke('download_update');
+    toast('success', u.mode === 'installed' ? `Versión ${u.release.version} descargada, lista para instalar` : `Versión ${u.release.version} lista; se usará al reiniciar`);
+  }),
+  'update-apply': async (el) => {
+    const u = S.upd;
+    const ok = await confirmPop(el, u.mode === 'installed'
+      ? { title: `Instalar la versión ${u.release.version}`, text: 'La app se cerrará, el instalador la actualizará y volverá a abrirla.', ok: 'Instalar', danger: false }
+      : { title: 'Reiniciar la app', text: `Se cerrará y se abrirá la versión ${u.release.version}.`, ok: 'Reiniciar', danger: false });
+    if (ok) invoke('apply_update').catch((e) => toast('danger', e));
+  },
+  'update-notes': () => invoke('open_release_notes', { url: S.upd?.release?.notesUrl || '' }).catch((e) => toast('danger', e)),
+  'update-file': () => invoke('open_path', { path: S.upd?.file || '' }).catch((e) => toast('danger', e)),
 };
 
 document.addEventListener('click', (e) => {
@@ -1602,6 +1723,7 @@ async function init() {
   });
   TAURI.event.listen('install', (e) => onInstallEvent(e.payload));
   TAURI.event.listen('tool', (e) => onToolEvent(e.payload));
+  TAURI.event.listen('update', (e) => onUpdateEvent(e.payload));
   TAURI.event.listen('logcat', (e) => onLogcatBatch(e.payload));
   TAURI.event.listen('log', (e) => {
     S.logs.push(e.payload);
@@ -1612,6 +1734,7 @@ async function init() {
   S.snap = await invoke('get_state');
   S.logs = await invoke('get_logs');
   await refreshDirs();
+  S.upd = await invoke('get_update');
   render();
   await appWindow.show();
   appWindow.setFocus();

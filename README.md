@@ -29,6 +29,7 @@ servidor adb **sin pelearte con Android Studio**.
 - 🛠️ **Control del servidor adb**: iniciar, reiniciar o detener; modo compartido o aislado; diagnóstico de conflictos.
 - 🧾 **Registro** de cada comando de adb/scrcpy con código de salida, duración y salida.
 - ⬇️ **Descarga de adb y scrcpy** con un clic si no están en el equipo.
+- 🔄 **Se actualiza sola** desde las releases de GitHub, instalada o portable.
 
 ## Requisitos
 
@@ -55,6 +56,33 @@ GitHub Actions compila la app en Windows en cada push a `main` y en cada pull re
   [Actions](https://github.com/iscalexsoto/android-device-manager/actions) (o *Checks* en un PR)
   y descarga `android-device-manager-installer` o `android-device-manager-portable`
   desde *Artifacts*. Requiere haber iniciado sesión en GitHub; se conservan 90 días.
+
+## Actualizaciones
+
+La app avisa cuando hay una versión nueva en
+[Releases](https://github.com/iscalexsoto/android-device-manager/releases) y la instala ella misma:
+
+- Al abrirse consulta la última release (como mucho una vez al día, sin bloquear la ventana).
+  Si hay una más nueva, la barra de título muestra «Versión X.Y.Z disponible». También se
+  puede buscar a mano en Ajustes → **Actualizaciones** → **Buscar ahora**.
+- **Descargar** baja el archivo que corresponde y verifica el SHA-256 que GitHub publica para él:
+  - **Instalada** (con el instalador): baja `…_x64-setup.exe` y, al pulsar **Instalar y reiniciar**,
+    lo ejecuta en modo pasivo (`/P /UPDATE /R`). Instala encima, sin desinstalar ni tocar los
+    ajustes, y vuelve a abrir la app.
+  - **Portable**: baja `android-device-manager.exe`, aparta el actual como
+    `android-device-manager.old.exe` y pone el nuevo en su lugar. **Reiniciar ahora** abre la
+    versión nueva, que espera a que la anterior termine de cerrarse. El `.old.exe` se borra en el
+    siguiente arranque. Si la carpeta no permite escribir, el nuevo queda junto al actual como
+    `android-device-manager-X.Y.Z.exe`.
+- No se actualiza mientras haya grabaciones en curso, para no dejar un MP4 sin índice.
+- La comprobación automática se desactiva en Ajustes → **Buscar al iniciar**. Solo se consulta
+  la API pública de GitHub; no se envía ningún dato.
+- En una compilación de depuración (`cargo run`) solo se avisa; no se reemplaza nada.
+
+Para publicar una versión: sube la versión en `Cargo.toml`, `tauri.conf.json` y la insignia del
+README, intégrala en `main` y sube el tag (`git tag v1.2.0 && git push origin v1.2.0`). El
+workflow compila y publica la release con el instalador y el portable; a partir de ahí las
+copias instaladas la ven en su siguiente comprobación.
 
 ## Compilar y ejecutar
 
@@ -98,7 +126,7 @@ cargo test
 | **Grabación** | Dispositivo a grabar, grabaciones en curso, carpetas de capturas y de videos (por separado), resolución, bitrate, formato y audio |
 | **Servidor ADB** | Estado, iniciar/reiniciar/detener, modo compartido o aislado, diagnóstico de conflictos, procesos `adb.exe` con puerto y versión, binarios adb del equipo |
 | **Registro** | Cada comando de adb/scrcpy ejecutado, con código de salida, duración y salida |
-| **Ajustes** | Rutas de adb y scrcpy; arranque automático del servidor; tema |
+| **Ajustes** | Actualizaciones; rutas de adb y scrcpy; arranque automático del servidor; tema |
 
 La interfaz sigue el sistema de diseño Retail One: tipografía Figtree / JetBrains Mono,
 barra superior de 36 + 48 px y rail derecho.
@@ -189,6 +217,7 @@ src/
   process.rs     ejecución sin consola y con tiempo límite
   settings.rs    preferencias (%APPDATA%\com.soto.androiddevicemanager\settings.json)
   tools.rs       descarga de adb (Platform-Tools) y scrcpy desde sus fuentes oficiales
+  update.rs      versiones nuevas en GitHub: descarga, verificación e instalación
 ui/              index.html, styles.css, app.js, logo.svg
 capabilities/    permisos de la ventana (Tauri 2)
 icons/           iconos de la app y del instalador

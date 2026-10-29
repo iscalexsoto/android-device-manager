@@ -101,6 +101,10 @@ pub struct Settings {
     pub video_dir: String,
     /// system | light | dark
     pub theme: String,
+    /// Buscar versiones nuevas en GitHub al iniciar (como mucho una vez al día).
+    pub check_updates: bool,
+    /// Segundos desde la época de la última comprobación correcta.
+    pub last_update_check: u64,
     pub scrcpy: ScrcpyOptions,
     pub record: RecordOptions,
     pub logcat: LogcatOptions,
@@ -117,6 +121,8 @@ impl Default for Settings {
             capture_dir: String::new(),
             video_dir: String::new(),
             theme: "system".into(),
+            check_updates: true,
+            last_update_check: 0,
             scrcpy: ScrcpyOptions::default(),
             record: RecordOptions::default(),
             logcat: LogcatOptions::default(),
