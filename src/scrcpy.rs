@@ -197,8 +197,10 @@ mod ctrl {
     use std::sync::Mutex;
     use std::time::Duration;
     use windows_sys::Win32::System::Console::{
-        AttachConsole, CTRL_C_EVENT, FreeConsole, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler,
+        AttachConsole, CTRL_C_EVENT, FreeConsole, GenerateConsoleCtrlEvent, GetStdHandle, STD_ERROR_HANDLE,
+        STD_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, SetConsoleCtrlHandler, SetStdHandle,
     };
+    use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::core::BOOL;
 
     static LOCK: Mutex<()> = Mutex::new(());
@@ -210,8 +212,29 @@ mod ctrl {
         1
     }
 
+    /// Una app abierta desde el Explorador no tiene stdin/stdout/stderr;
+    /// AttachConsole los apunta a la consola y FreeConsole los deja inválidos.
+    /// Sin restaurarlos, todo proceso lanzado después heredándolos (explorer.exe,
+    /// el instalador de una actualización) falla con «Controlador no válido (os error 6)».
+    struct StdHandles([(STD_HANDLE, HANDLE); 3]);
+
+    impl StdHandles {
+        fn save() -> Self {
+            Self([STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(|k| (k, unsafe { GetStdHandle(k) })))
+        }
+    }
+
+    impl Drop for StdHandles {
+        fn drop(&mut self) {
+            for (k, h) in self.0 {
+                unsafe { SetStdHandle(k, h) };
+            }
+        }
+    }
+
     pub fn interrupt(pid: u32) -> bool {
         let _guard = LOCK.lock().unwrap();
+        let _std = StdHandles::save();
         unsafe {
             FreeConsole();
             if AttachConsole(pid) == 0 {

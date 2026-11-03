@@ -200,7 +200,7 @@ impl Updater {
         let (Some(file), "ready") = (&s.file, s.phase) else {
             return Err("La actualización todavía no está descargada".into());
         };
-        let mut cmd = std::process::Command::new(file);
+        let mut cmd = crate::process::detached(file);
         match s.mode {
             Mode::Installed => cmd.args(["/P", "/UPDATE", "/R"]),
             _ => cmd.arg(format!("{WAIT_ARG}{}", std::process::id())),
