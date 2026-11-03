@@ -44,6 +44,14 @@ impl Output {
     }
 }
 
+/// Programa que sigue por su cuenta (Explorador, instalador): no hereda
+/// stdin/stdout/stderr, que en una app sin consola pueden no ser válidos.
+pub fn detached(exe: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut cmd = Command::new(exe);
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd
+}
+
 pub fn command(exe: &Path) -> Command {
     let mut cmd = Command::new(exe);
     #[cfg(windows)]

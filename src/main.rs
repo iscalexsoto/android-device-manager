@@ -301,7 +301,7 @@ fn detect_paths() -> serde_json::Value {
 #[tauri::command]
 fn open_path(path: String) -> R<()> {
     let p = std::path::PathBuf::from(&path);
-    let mut cmd = std::process::Command::new("explorer.exe");
+    let mut cmd = process::detached("explorer.exe");
     if p.is_file() {
         cmd.arg(format!("/select,{}", p.display()));
     } else {
@@ -355,7 +355,7 @@ fn open_release_notes(url: String) -> R<()> {
     if !url.starts_with(update::RELEASES_URL) {
         return Err("Enlace no válido".into());
     }
-    std::process::Command::new("explorer.exe").arg(&url).spawn().map(|_| ()).map_err(|e| e.to_string())
+    process::detached("explorer.exe").arg(&url).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Consulta GitHub y, si respondió, guarda la fecha para la comprobación automática.
